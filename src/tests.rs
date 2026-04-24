@@ -652,7 +652,7 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
 
 use crate::properties::{
     AppId, ClusterId, ContentEncoding, ContentType, CorrelationId, DeliveryMode, Expiration,
-    MessageId, MessageKind, MessageTimestamp, Priority, ReplyTo,
+    Headers, MessageId, MessageKind, MessageTimestamp, Priority, ReplyTo,
 };
 
 async fn publish_with_props(
@@ -712,3 +712,4 @@ single_prop_publish_test!(publish_with_delivery_mode, DeliveryMode);
 single_prop_publish_test!(publish_with_priority, Priority);
 single_prop_publish_test!(publish_with_timestamp, MessageTimestamp);
 single_prop_publish_test!(publish_with_expiration, Expiration);
+single_prop_publish_test!(publish_with_headers, Headers);

@@ -4,7 +4,7 @@
 //! broker-valid values.
 
 use lapin::BasicProperties;
-use lapin::types::ShortString;
+use lapin::types::{AMQPValue, FieldTable, LongString, ShortString};
 use quickcheck::{Arbitrary, Gen};
 
 use crate::names::QUEUE_NAME_CHARS;
@@ -217,5 +217,64 @@ impl Arbitrary for Expiration {
         // LavinMQ parses this as an integer number of milliseconds.
         // Generate any u32 formatted as decimal.
         Expiration(format!("{}", u32::arbitrary(g)))
+    }
+}
+
+const HEADER_NAME_CHARS: &[u8] =
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+
+fn header_name(g: &mut Gen) -> String {
+    let len = *g.choose(&(1..=32usize).collect::<Vec<_>>()).unwrap();
+    (0..len)
+        .map(|_| {
+            let &byte = g.choose(HEADER_NAME_CHARS).unwrap();
+            byte as char
+        })
+        .collect()
+}
+
+fn arbitrary_scalar_value(g: &mut Gen) -> AMQPValue {
+    // Twelve uniform variants; one is picked per entry.
+    let variant = *g.choose(&(0u8..12).collect::<Vec<_>>()).unwrap();
+    match variant {
+        0 => AMQPValue::Boolean(bool::arbitrary(g)),
+        1 => AMQPValue::ShortShortInt(i8::arbitrary(g)),
+        2 => AMQPValue::ShortShortUInt(u8::arbitrary(g)),
+        3 => AMQPValue::ShortInt(i16::arbitrary(g)),
+        4 => AMQPValue::ShortUInt(u16::arbitrary(g)),
+        5 => AMQPValue::LongInt(i32::arbitrary(g)),
+        6 => AMQPValue::LongUInt(u32::arbitrary(g)),
+        7 => AMQPValue::LongLongInt(i64::arbitrary(g)),
+        8 => AMQPValue::Float(f32::arbitrary(g)),
+        9 => AMQPValue::Double(f64::arbitrary(g)),
+        10 => {
+            let s = short_string(g, SHORT_STRING_MAX);
+            AMQPValue::LongString(LongString::from(s))
+        }
+        _ => AMQPValue::Timestamp(u64::arbitrary(g)),
+    }
+}
+
+/// `headers` message property. Flat scalars only — no nested tables, arrays,
+/// or exotic types (Void / DecimalValue / ByteArray / FieldArray / FieldTable).
+#[derive(Clone, Debug)]
+pub struct Headers(pub FieldTable);
+
+impl Headers {
+    pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
+        props.with_headers(self.0.clone())
+    }
+}
+
+impl Arbitrary for Headers {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let n_entries = *g.choose(&(0usize..=10).collect::<Vec<_>>()).unwrap();
+        let mut table = FieldTable::default();
+        for _ in 0..n_entries {
+            let key = header_name(g);
+            let value = arbitrary_scalar_value(g);
+            table.insert(key.into(), value);
+        }
+        Headers(table)
     }
 }
