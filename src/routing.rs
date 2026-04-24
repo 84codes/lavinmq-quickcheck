@@ -43,6 +43,7 @@ pub enum Binding {
 }
 
 use std::collections::HashMap;
+use quickcheck::{Arbitrary, Gen};
 
 /// Predicts the per-queue ack count for one message published at
 /// `exchanges[0]`. Keyed by queue index. Queues with zero acks are absent.
@@ -83,6 +84,65 @@ pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
 enum Node {
     Exchange(usize),
     Queue(usize),
+}
+
+impl Arbitrary for Topology {
+    fn arbitrary(g: &mut Gen) -> Self {
+        // 1. Pick sizes clamped into [1, 8], size-driven.
+        let n_ex = *g
+            .choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>())
+            .unwrap();
+        let n_q = *g
+            .choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>())
+            .unwrap();
+
+        // 2. Per-iteration random suffix so names don't collide with
+        //    earlier (possibly leaked) iterations on the broker.
+        let suffix: u64 = u64::arbitrary(g);
+
+        let exchanges: Vec<ExchangeNode> = (0..n_ex)
+            .map(|i| ExchangeNode {
+                name: format!("qc_ex_{:x}_{}", suffix, i),
+            })
+            .collect();
+
+        let queues: Vec<QueueNode> = (0..n_q)
+            .map(|i| {
+                let dlx = if bool::arbitrary(g) {
+                    Some(*g.choose(&(0..n_ex).collect::<Vec<_>>()).unwrap())
+                } else {
+                    None
+                };
+                let action = if bool::arbitrary(g) {
+                    QueueAction::Ack
+                } else {
+                    QueueAction::Reject
+                };
+                QueueNode {
+                    name: format!("qc_q_{:x}_{}", suffix, i),
+                    dlx,
+                    action,
+                }
+            })
+            .collect();
+
+        // 3. Forward-only bindings. 50/50 per candidate edge.
+        let mut bindings = Vec::new();
+        for src in 0..n_ex {
+            for dst in (src + 1)..n_ex {
+                if bool::arbitrary(g) {
+                    bindings.push(Binding::ExchangeToExchange { src, dst });
+                }
+            }
+            for dst in 0..n_q {
+                if bool::arbitrary(g) {
+                    bindings.push(Binding::ExchangeToQueue { src, dst });
+                }
+            }
+        }
+
+        Topology { exchanges, queues, bindings }
+    }
 }
 
 #[cfg(test)]
@@ -189,5 +249,51 @@ mod simulator_tests {
             ],
         };
         assert_eq!(simulate(&topo), HashMap::from([(0, 2)]));
+    }
+}
+
+#[cfg(test)]
+mod generator_tests {
+    use super::*;
+    use quickcheck_macros::quickcheck;
+
+    #[quickcheck]
+    fn generated_topology_is_a_dag(topo: Topology) -> bool {
+        // Every binding points forward in topo order, and every index is
+        // in-bounds for the declared node counts.
+        for b in &topo.bindings {
+            match *b {
+                Binding::ExchangeToExchange { src, dst } => {
+                    if src >= dst {
+                        return false;
+                    }
+                    if dst >= topo.exchanges.len() {
+                        return false;
+                    }
+                }
+                Binding::ExchangeToQueue { src, dst } => {
+                    if src >= topo.exchanges.len() || dst >= topo.queues.len() {
+                        return false;
+                    }
+                }
+            }
+        }
+        // Every DLX reference is an in-bounds exchange.
+        for q in &topo.queues {
+            if let Some(dlx) = q.dlx {
+                if dlx >= topo.exchanges.len() {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    #[quickcheck]
+    fn simulate_terminates_on_any_generated_topology(topo: Topology) -> bool {
+        // simulate() is guaranteed to return on any DAG. If it hangs,
+        // either the generator has a bug or simulate() is wrong.
+        let _ = simulate(&topo);
+        true
     }
 }
