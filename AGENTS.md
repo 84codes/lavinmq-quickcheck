@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions. Currently implements `QueueName` generation with valid character constraints.
+`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, and the full set of LavinMQ queue-declaration arguments.
 
 ## Commands
 
@@ -25,21 +25,25 @@ cargo clippy
 
 ## External Dependencies (Runtime)
 
-Tests require a **RabbitMQ server** running on `amqp://localhost:5672` with default credentials. Without it, `cargo test` will fail with connection errors. You can start one with:
+Tests require a **LavinMQ server** running on `amqp://localhost:5672` with default credentials. Without it, `cargo test` will fail with connection errors. You can start one with:
 
 ```sh
-docker run -d --rm -p 5672:5672 rabbitmq:3
+docker run -d --rm -p 5672:5672 cloudamqp/lavinmq
 ```
 
 ## Project Structure
 
 ```
 src/
-  lib.rs    — Library root. Contains Arbitrary impls and integration tests.
-Cargo.toml  — Package manifest (edition 2024).
+  lib.rs        — Library root. Re-exports the public API.
+  names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey.
+  arguments.rs  — Arbitrary impls for individual x-* queue arguments.
+  combined.rs   — Arbitrary impls for combined argument sets per queue type.
+  tests.rs      — #[cfg(test)] integration tests against a real broker.
+Cargo.toml      — Package manifest (edition 2024).
 ```
 
-This is a single-file library crate (`lib.rs`). There is no `main.rs` / binary target.
+This is a library crate (`lib.rs` is the root — no binary target).
 
 ## Key Dependencies
 
@@ -89,7 +93,7 @@ Because `#[quickcheck]` requires synchronous functions returning `bool`, each te
 
 ## Gotchas
 
-1. **RabbitMQ required for tests** — Tests are not unit tests; they hit a real broker. CI must provision RabbitMQ.
+1. **LavinMQ required for tests** — Tests are not unit tests; they hit a real LavinMQ broker. CI must provision LavinMQ.
 2. **Edition 2024** — This crate uses Rust edition `2024`. Ensure your toolchain is recent enough (`rustup update`).
 3. **Retry loop in `Arbitrary`** — `QueueName::arbitrary` uses a `loop` to reject reserved prefixes. This is safe because the probability of generating `amq.` prefix is vanishingly small, but it's technically unbounded.
 4. **No `shrink` implementation** — The `Arbitrary` impl only defines `arbitrary`, not `shrink`. QuickCheck will use default shrinking on the inner `String`, which may produce invalid names during shrink. If shrink-generated names cause test failures unrelated to the property, consider implementing `shrink` with domain constraints.
