@@ -350,3 +350,16 @@ fn declare_classic_with_combined_args(name: QueueName, args: ClassicQueueArgs) -
         declare_classic_ok(&channel, &name.0, table).await
     })
 }
+
+use crate::combined::PriorityQueueArgs;
+
+#[quickcheck]
+fn declare_priority_with_combined_args(name: QueueName, args: PriorityQueueArgs) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        let mut table = FieldTable::default();
+        args.apply(&mut table);
+        declare_classic_ok(&channel, &name.0, table).await
+    })
+}

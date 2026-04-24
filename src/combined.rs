@@ -96,3 +96,27 @@ impl Arbitrary for ClassicQueueArgs {
         }
     }
 }
+
+use crate::arguments::MaxPriority;
+
+#[derive(Clone, Debug)]
+pub struct PriorityQueueArgs {
+    pub max_priority: MaxPriority,
+    pub classic: ClassicQueueArgs,
+}
+
+impl PriorityQueueArgs {
+    pub fn apply(&self, table: &mut FieldTable) {
+        self.max_priority.insert_into(table);
+        self.classic.apply(table);
+    }
+}
+
+impl Arbitrary for PriorityQueueArgs {
+    fn arbitrary(g: &mut Gen) -> Self {
+        PriorityQueueArgs {
+            max_priority: MaxPriority::arbitrary(g),
+            classic: ClassicQueueArgs::arbitrary(g),
+        }
+    }
+}
