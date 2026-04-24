@@ -197,3 +197,41 @@ impl Arbitrary for Overflow {
         Overflow(kind)
     }
 }
+
+/// `x-single-active-consumer` — only one consumer active at a time.
+#[derive(Clone, Debug)]
+pub struct SingleActiveConsumer(pub bool);
+
+impl SingleActiveConsumer {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-single-active-consumer"),
+            AMQPValue::Boolean(self.0),
+        );
+    }
+}
+
+impl Arbitrary for SingleActiveConsumer {
+    fn arbitrary(g: &mut Gen) -> Self {
+        SingleActiveConsumer(bool::arbitrary(g))
+    }
+}
+
+/// `x-message-deduplication` — enable dedup on this queue.
+#[derive(Clone, Debug)]
+pub struct MessageDeduplication(pub bool);
+
+impl MessageDeduplication {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-message-deduplication"),
+            AMQPValue::Boolean(self.0),
+        );
+    }
+}
+
+impl Arbitrary for MessageDeduplication {
+    fn arbitrary(g: &mut Gen) -> Self {
+        MessageDeduplication(bool::arbitrary(g))
+    }
+}

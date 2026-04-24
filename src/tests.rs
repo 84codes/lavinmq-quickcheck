@@ -251,7 +251,7 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
 
 use crate::arguments::{
     CacheSize, CacheTtl, ConsumerTimeout, DeliveryLimit, Expires, MaxLength, MaxLengthBytes,
-    MessageTtl, Overflow,
+    MessageDeduplication, MessageTtl, Overflow, SingleActiveConsumer,
 };
 
 macro_rules! single_arg_classic_test {
@@ -278,3 +278,5 @@ single_arg_classic_test!(declare_with_consumer_timeout, ConsumerTimeout);
 single_arg_classic_test!(declare_with_cache_size, CacheSize);
 single_arg_classic_test!(declare_with_cache_ttl, CacheTtl);
 single_arg_classic_test!(declare_with_overflow, Overflow);
+single_arg_classic_test!(declare_with_single_active_consumer, SingleActiveConsumer);
+single_arg_classic_test!(declare_with_message_deduplication, MessageDeduplication);
