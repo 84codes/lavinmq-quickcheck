@@ -91,3 +91,42 @@ lazily or capping it internally, this limit can be lifted.
 **Operational note:** If you see tests from an earlier run of this crate
 leaving LavinMQ unresponsive, this quirk is a likely cause. Restarting the
 broker restores normal operation.
+
+## 3. Routing dedups visited exchanges and queues per delivery pass
+
+**Observed:** When a single message is routed through fanout exchanges
+with multiple paths, LavinMQ visits each exchange and each queue **at
+most once** within the pass. Concretely:
+
+- Diamond path `E₀ → E₁ → E₂` combined with `E₀ → E₂` produces one
+  delivery through `E₂`, not two.
+- Two independent `E → Q` bindings (e.g. `E₀ → Q` and `E₁ → Q`) from
+  fanout sources that are both reachable deliver one copy to `Q`, not
+  two.
+
+Dead-lettering, by contrast, is a **fresh routing pass**: the DLX
+receives a newly-published message with empty visited sets, so it can
+re-reach exchanges and queues that the original pass already visited.
+
+**Where the docs disagree:** Not really a LavinMQ-specific quirk —
+RabbitMQ behaves the same way. But it's easy to forget when modelling
+fanout semantics: a naive "one copy per binding, no dedup" reference
+model over-counts every time a fan-in convergence happens.
+
+**How we found it:** The routing-graph property test
+(`src/tests.rs::routing_graph_delivers_expected`) compares observed
+per-queue ack counts against a pure-Rust simulator. An initial version
+of the simulator that pushed one copy per binding with no dedup
+disagreed with LavinMQ on most non-trivial graphs. QuickCheck shrunk
+the failing cases down to minimal diamond and fan-in reproducers, which
+pinpointed the behaviour.
+
+**How the simulator models it:**
+
+- Each routing pass maintains its own `HashSet<usize>` of visited
+  exchanges and queues. Revisits within a pass are skipped (before
+  fan-out and before ack accounting).
+- When a queue rejects with a DLX, a new routing event is queued with
+  fresh empty visited sets.
+
+See `src/routing.rs::simulate` for the implementation.
