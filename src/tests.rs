@@ -650,7 +650,10 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
 // BasicProperties publish-only tests
 // ---------------------------------------------------------------------------
 
-use crate::properties::ContentType;
+use crate::properties::{
+    AppId, ClusterId, ContentEncoding, ContentType, CorrelationId, MessageId, MessageKind,
+    ReplyTo,
+};
 
 async fn publish_with_props(
     channel: &lapin::Channel,
@@ -698,3 +701,10 @@ macro_rules! single_prop_publish_test {
 }
 
 single_prop_publish_test!(publish_with_content_type, ContentType);
+single_prop_publish_test!(publish_with_content_encoding, ContentEncoding);
+single_prop_publish_test!(publish_with_correlation_id, CorrelationId);
+single_prop_publish_test!(publish_with_reply_to, ReplyTo);
+single_prop_publish_test!(publish_with_message_id, MessageId);
+single_prop_publish_test!(publish_with_kind, MessageKind);
+single_prop_publish_test!(publish_with_app_id, AppId);
+single_prop_publish_test!(publish_with_cluster_id, ClusterId);
