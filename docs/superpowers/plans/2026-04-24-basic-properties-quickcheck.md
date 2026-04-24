@@ -251,7 +251,8 @@ pub struct MessageKind(pub String);
 
 impl MessageKind {
     pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
-        props.with_kind(ShortString::from(self.0.clone()))
+        // Lapin's setter is `with_type`; `with_kind` is the deprecated alias.
+        props.with_type(ShortString::from(self.0.clone()))
     }
 }
 
