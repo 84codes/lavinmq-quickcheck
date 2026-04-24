@@ -652,15 +652,10 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
 
 use crate::properties::{
     AppId, BasicPropertiesArgs, ClusterId, ContentEncoding, ContentType, CorrelationId,
-    DeliveryMode, Expiration, Headers, MessageId, MessageKind, MessageTimestamp, Priority,
-    ReplyTo,
+    DeliveryMode, Expiration, Headers, MessageId, MessageKind, MessageTimestamp, Priority, ReplyTo,
 };
 
-async fn publish_with_props(
-    channel: &lapin::Channel,
-    name: &str,
-    props: BasicProperties,
-) -> bool {
+async fn publish_with_props(channel: &lapin::Channel, name: &str, props: BasicProperties) -> bool {
     let declared = channel
         .queue_declare(name, classic_queue_opts(), FieldTable::default())
         .await
@@ -669,13 +664,7 @@ async fn publish_with_props(
         return false;
     }
     let res = channel
-        .basic_publish(
-            "",
-            name,
-            BasicPublishOptions::default(),
-            b"",
-            props,
-        )
+        .basic_publish("", name, BasicPublishOptions::default(), b"", props)
         .await;
     let ok = match res {
         Ok(confirm) => confirm.await.is_ok(),
