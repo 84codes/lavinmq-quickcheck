@@ -337,3 +337,16 @@ macro_rules! single_arg_stream_test {
 }
 
 single_arg_stream_test!(declare_stream_with_max_age, MaxAge);
+
+use crate::combined::ClassicQueueArgs;
+
+#[quickcheck]
+fn declare_classic_with_combined_args(name: QueueName, args: ClassicQueueArgs) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        let mut table = FieldTable::default();
+        args.apply(&mut table);
+        declare_classic_ok(&channel, &name.0, table).await
+    })
+}

@@ -137,7 +137,11 @@ impl CacheSize {
 
 impl Arbitrary for CacheSize {
     fn arbitrary(g: &mut Gen) -> Self {
-        CacheSize(u32::arbitrary(g))
+        // Cap at 100_000 to avoid triggering OOM crashes in LavinMQ when the
+        // dedup cache is actually allocated (i.e. when x-message-deduplication
+        // is also set). The broker allocates the cache up front; very large
+        // values (> ~500 M on a typical test host) cause it to crash.
+        CacheSize(u32::arbitrary(g) % 100_000)
     }
 }
 
