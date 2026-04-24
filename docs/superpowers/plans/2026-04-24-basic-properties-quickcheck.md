@@ -493,7 +493,9 @@ fn arbitrary_scalar_value(g: &mut Gen) -> AMQPValue {
         5 => AMQPValue::LongInt(i32::arbitrary(g)),
         6 => AMQPValue::LongUInt(u32::arbitrary(g)),
         7 => AMQPValue::LongLongInt(i64::arbitrary(g)),
-        8 => AMQPValue::LongLongUInt(u64::arbitrary(g)),
+        // amq-protocol-types 7.2 deliberately omits AMQPValue::LongLongUInt;
+        // we use Float in its slot to keep 12 scalar variants.
+        8 => AMQPValue::Float(f32::arbitrary(g)),
         9 => AMQPValue::Double(f64::arbitrary(g)),
         10 => {
             let s = short_string(g, SHORT_STRING_MAX);
