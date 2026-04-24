@@ -4,9 +4,9 @@
 //! together with integration tests that exercise them against a real LavinMQ
 //! broker.
 
-pub mod names;
 pub mod arguments;
 pub mod combined;
+pub mod names;
 
 pub use names::{QueueName, RoutingKey, TopicRoutingKey};
 

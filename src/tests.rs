@@ -74,10 +74,7 @@ async fn declare_stream_rejects(
         lapin::types::ShortString::from("x-queue-type"),
         lapin::types::AMQPValue::LongString("stream".into()),
     );
-    match channel
-        .queue_declare(name, stream_queue_opts(), args)
-        .await
-    {
+    match channel.queue_declare(name, stream_queue_opts(), args).await {
         Ok(_) => {
             // Unexpected success — clean up so we don't leak.
             let _ = channel
@@ -297,9 +294,9 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
 }
 
 use crate::arguments::{
-    CacheSize, CacheTtl, ConsumerTimeout, DeliveryLimit, DeadLetterExchange,
-    DeadLetterRoutingKey, DeduplicationHeader, Expires, MaxLength, MaxLengthBytes,
-    MaxPriority, MessageDeduplication, MessageTtl, Overflow, SingleActiveConsumer,
+    CacheSize, CacheTtl, ConsumerTimeout, DeadLetterExchange, DeadLetterRoutingKey,
+    DeduplicationHeader, DeliveryLimit, Expires, MaxLength, MaxLengthBytes, MaxPriority,
+    MessageDeduplication, MessageTtl, Overflow, SingleActiveConsumer,
 };
 
 macro_rules! single_arg_classic_test {

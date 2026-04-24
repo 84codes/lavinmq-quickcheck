@@ -1,7 +1,7 @@
 // src/arguments.rs
+use crate::names::{QUEUE_NAME_CHARS, RESERVED_QUEUE_PREFIX, RoutingKey};
 use lapin::types::{AMQPValue, FieldTable, ShortString};
 use quickcheck::{Arbitrary, Gen};
-use crate::names::{QUEUE_NAME_CHARS, RESERVED_QUEUE_PREFIX, RoutingKey};
 
 /// `x-max-length` — max number of messages.
 #[derive(Clone, Debug)]
