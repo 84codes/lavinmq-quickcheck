@@ -250,7 +250,8 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
 }
 
 use crate::arguments::{
-    CacheSize, CacheTtl, ConsumerTimeout, DeliveryLimit, Expires, MaxLength, MaxLengthBytes,
+    CacheSize, CacheTtl, ConsumerTimeout, DeliveryLimit, DeadLetterExchange,
+    DeadLetterRoutingKey, DeduplicationHeader, Expires, MaxLength, MaxLengthBytes,
     MessageDeduplication, MessageTtl, Overflow, SingleActiveConsumer,
 };
 
@@ -280,3 +281,23 @@ single_arg_classic_test!(declare_with_cache_ttl, CacheTtl);
 single_arg_classic_test!(declare_with_overflow, Overflow);
 single_arg_classic_test!(declare_with_single_active_consumer, SingleActiveConsumer);
 single_arg_classic_test!(declare_with_message_deduplication, MessageDeduplication);
+single_arg_classic_test!(declare_with_dead_letter_exchange, DeadLetterExchange);
+single_arg_classic_test!(declare_with_deduplication_header, DeduplicationHeader);
+
+// LavinMQ rejects `x-dead-letter-routing-key` when `x-dead-letter-exchange`
+// isn't also set (an orphan routing key has nowhere to route). Set a fixed
+// DLX alongside so the per-arg test exercises only the routing-key value.
+#[quickcheck]
+fn declare_with_dead_letter_routing_key(name: QueueName, arg: DeadLetterRoutingKey) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        let mut table = FieldTable::default();
+        table.insert(
+            lapin::types::ShortString::from("x-dead-letter-exchange"),
+            lapin::types::AMQPValue::LongString("amq.direct".into()),
+        );
+        arg.insert_into(&mut table);
+        declare_classic_ok(&channel, &name.0, table).await
+    })
+}

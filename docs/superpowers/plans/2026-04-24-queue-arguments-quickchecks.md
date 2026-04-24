@@ -813,14 +813,30 @@ impl Arbitrary for DeduplicationHeader {
 
 - [ ] **Step 2: Add per-argument tests**
 
-Append to `src/tests.rs`:
+Append to `src/tests.rs`. Note that `x-dead-letter-routing-key` on its own is
+rejected by LavinMQ (an orphan routing key with no dead-letter exchange to
+route to), so that test is hand-rolled to also set a fixed DLX.
 
 ```rust
 use crate::arguments::{DeadLetterExchange, DeadLetterRoutingKey, DeduplicationHeader};
 
 single_arg_classic_test!(declare_with_dead_letter_exchange, DeadLetterExchange);
-single_arg_classic_test!(declare_with_dead_letter_routing_key, DeadLetterRoutingKey);
 single_arg_classic_test!(declare_with_deduplication_header, DeduplicationHeader);
+
+#[quickcheck]
+fn declare_with_dead_letter_routing_key(name: QueueName, arg: DeadLetterRoutingKey) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        let mut table = FieldTable::default();
+        table.insert(
+            lapin::types::ShortString::from("x-dead-letter-exchange"),
+            lapin::types::AMQPValue::LongString("amq.direct".into()),
+        );
+        arg.insert_into(&mut table);
+        declare_classic_ok(&channel, &name.0, table).await
+    })
+}
 ```
 
 - [ ] **Step 3: Run the new tests**
@@ -1050,7 +1066,10 @@ impl ClassicQueueArgs {
         if let Some(a) = &self.dead_letter_exchange {
             a.insert_into(table);
         }
-        if let Some(a) = &self.dead_letter_routing_key {
+        // LavinMQ rejects `x-dead-letter-routing-key` without
+        // `x-dead-letter-exchange`. Only insert the routing key when an
+        // exchange is also set — otherwise the routing key is an orphan.
+        if let (Some(a), Some(_)) = (&self.dead_letter_routing_key, &self.dead_letter_exchange) {
             a.insert_into(table);
         }
         if let Some(a) = &self.delivery_limit {

@@ -1,6 +1,7 @@
 // src/arguments.rs
 use lapin::types::{AMQPValue, FieldTable, ShortString};
 use quickcheck::{Arbitrary, Gen};
+use crate::names::{QUEUE_NAME_CHARS, RESERVED_QUEUE_PREFIX, RoutingKey};
 
 /// `x-max-length` — max number of messages.
 #[derive(Clone, Debug)]
@@ -233,5 +234,85 @@ impl MessageDeduplication {
 impl Arbitrary for MessageDeduplication {
     fn arbitrary(g: &mut Gen) -> Self {
         MessageDeduplication(bool::arbitrary(g))
+    }
+}
+
+/// `x-dead-letter-exchange` — exchange dead-letters are republished to.
+#[derive(Clone, Debug)]
+pub struct DeadLetterExchange(pub String);
+
+impl DeadLetterExchange {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-dead-letter-exchange"),
+            AMQPValue::LongString(self.0.clone().into()),
+        );
+    }
+}
+
+impl Arbitrary for DeadLetterExchange {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let max_len = g.size().clamp(1, 255);
+        let len = *g.choose(&(1..=max_len).collect::<Vec<_>>()).unwrap();
+        loop {
+            let name: String = (0..len)
+                .map(|_| {
+                    let &byte = g.choose(QUEUE_NAME_CHARS).unwrap();
+                    byte as char
+                })
+                .collect();
+            if !name.starts_with(RESERVED_QUEUE_PREFIX) {
+                return DeadLetterExchange(name);
+            }
+        }
+    }
+}
+
+/// `x-dead-letter-routing-key` — routing key used when dead-lettering.
+#[derive(Clone, Debug)]
+pub struct DeadLetterRoutingKey(pub RoutingKey);
+
+impl DeadLetterRoutingKey {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-dead-letter-routing-key"),
+            AMQPValue::LongString(self.0.0.clone().into()),
+        );
+    }
+}
+
+impl Arbitrary for DeadLetterRoutingKey {
+    fn arbitrary(g: &mut Gen) -> Self {
+        DeadLetterRoutingKey(RoutingKey::arbitrary(g))
+    }
+}
+
+/// `x-deduplication-header` — message-header name carrying the dedup key.
+#[derive(Clone, Debug)]
+pub struct DeduplicationHeader(pub String);
+
+const HEADER_NAME_CHARS: &[u8] =
+    b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+
+impl DeduplicationHeader {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-deduplication-header"),
+            AMQPValue::LongString(self.0.clone().into()),
+        );
+    }
+}
+
+impl Arbitrary for DeduplicationHeader {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let max_len = g.size().clamp(1, 64);
+        let len = *g.choose(&(1..=max_len).collect::<Vec<_>>()).unwrap();
+        let name: String = (0..len)
+            .map(|_| {
+                let &byte = g.choose(HEADER_NAME_CHARS).unwrap();
+                byte as char
+            })
+            .collect();
+        DeduplicationHeader(name)
     }
 }
