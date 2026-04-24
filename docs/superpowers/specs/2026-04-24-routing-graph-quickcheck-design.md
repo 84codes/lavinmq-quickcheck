@@ -184,36 +184,62 @@ impl Arbitrary for Topology {
 
 ## Reference simulator
 
-Pure function, no I/O:
+Pure function, no I/O. Two broker semantics are load-bearing for the
+model (both confirmed empirically against LavinMQ by the integration
+test):
+
+1. **Per-routing-pass deduplication.** Within one delivery of a single
+   published message, LavinMQ (like RabbitMQ) visits each exchange at
+   most once and each queue at most once. Diamond paths
+   (`E₀ → E₁ → E₂` and `E₀ → E₂`) deliver to `E₂` once, not twice.
+   Similarly, two `E → Q` bindings from different exchanges to the same
+   queue still deliver one copy.
+2. **Dead-lettering is a fresh routing pass.** When a queue rejects, the
+   DLX receives a newly-published message with its own empty visited
+   sets — so it can re-reach exchanges and queues that the original pass
+   already visited.
 
 ```rust
+use std::collections::{HashMap, HashSet};
+
 pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
     let mut delivered: HashMap<usize, u32> = HashMap::new();
-    let mut stack: Vec<Node> = vec![Node::Exchange(0)];
-    while let Some(node) = stack.pop() {
-        match node {
-            Node::Exchange(ex) => {
-                for b in &topo.bindings {
-                    match *b {
-                        Binding::ExchangeToExchange { src, dst } if src == ex => {
-                            stack.push(Node::Exchange(dst));
+    // Each entry is a pending (or in-progress) routing event: the
+    // starting exchange plus the exchanges/queues already visited on
+    // that event's pass.
+    let mut work: Vec<(usize, HashSet<usize>, HashSet<usize>)> =
+        vec![(0, HashSet::new(), HashSet::new())];
+    while let Some((start_ex, mut vis_ex, mut vis_q)) = work.pop() {
+        let mut stack: Vec<Node> = vec![Node::Exchange(start_ex)];
+        while let Some(node) = stack.pop() {
+            match node {
+                Node::Exchange(ex) => {
+                    if !vis_ex.insert(ex) { continue; }
+                    for b in &topo.bindings {
+                        match *b {
+                            Binding::ExchangeToExchange { src, dst } if src == ex => {
+                                stack.push(Node::Exchange(dst));
+                            }
+                            Binding::ExchangeToQueue { src, dst } if src == ex => {
+                                stack.push(Node::Queue(dst));
+                            }
+                            _ => {}
                         }
-                        Binding::ExchangeToQueue { src, dst } if src == ex => {
-                            stack.push(Node::Queue(dst));
+                    }
+                }
+                Node::Queue(q) => {
+                    if !vis_q.insert(q) { continue; }
+                    match topo.queues[q].action {
+                        QueueAction::Ack => *delivered.entry(q).or_insert(0) += 1,
+                        QueueAction::Reject => {
+                            if let Some(dlx) = topo.queues[q].dlx {
+                                // DL starts a fresh pass with empty visited sets.
+                                work.push((dlx, HashSet::new(), HashSet::new()));
+                            }
                         }
-                        _ => {}
                     }
                 }
             }
-            Node::Queue(q) => match topo.queues[q].action {
-                QueueAction::Ack => *delivered.entry(q).or_insert(0) += 1,
-                QueueAction::Reject => {
-                    if let Some(dlx) = topo.queues[q].dlx {
-                        stack.push(Node::Exchange(dlx));
-                    }
-                    // else: message is dropped by LavinMQ (no DLX)
-                }
-            },
         }
     }
     delivered
@@ -222,9 +248,10 @@ pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
 enum Node { Exchange(usize), Queue(usize) }
 ```
 
-Fanout semantics: a single arrival at an exchange produces one downstream
-traversal per outbound binding. Copies multiply at fan-out points. The DAG
-invariant guarantees termination — no hop cap required.
+Fanout semantics: a single arrival at an exchange produces one
+downstream traversal per outbound binding, constrained by the visited
+sets above. The DAG invariant (cutpoint scheme) plus per-pass dedup
+guarantees termination — no hop cap required.
 
 ## Applier / verification harness
 
@@ -322,7 +349,7 @@ wall time. With rejection, a typical iteration finishes in <50 ms.
 | Observed | Interpretation |
 | --- | --- |
 | Actual count < expected | LavinMQ lost or mis-routed a copy; or our declarations / consumer logic is wrong. |
-| Actual count > expected | LavinMQ duplicated a copy (broker bug) or our simulator is wrong. |
+| Actual count > expected | LavinMQ duplicated a copy (broker bug) or our simulator is wrong — most commonly, a missing dedup case somewhere. |
 | Test times out at 500 ms | Messages are stuck in a cycle we failed to prevent, or LavinMQ is hanging. Graph should be reproduced manually. |
 | Test leaks queues/exchanges on failure | `cleanup` didn't run. Acceptable — per-test-run name suffixes prevent cross-iteration pollution. |
 
