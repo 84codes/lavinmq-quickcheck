@@ -158,3 +158,42 @@ impl Arbitrary for CacheTtl {
         CacheTtl(u32::arbitrary(g))
     }
 }
+
+#[derive(Clone, Debug)]
+pub enum OverflowKind {
+    DropHead,
+    RejectPublish,
+}
+
+impl OverflowKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            OverflowKind::DropHead => "drop-head",
+            OverflowKind::RejectPublish => "reject-publish",
+        }
+    }
+}
+
+/// `x-overflow` — behaviour when a length limit is hit.
+#[derive(Clone, Debug)]
+pub struct Overflow(pub OverflowKind);
+
+impl Overflow {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-overflow"),
+            AMQPValue::LongString(self.0.as_str().into()),
+        );
+    }
+}
+
+impl Arbitrary for Overflow {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let kind = if bool::arbitrary(g) {
+            OverflowKind::DropHead
+        } else {
+            OverflowKind::RejectPublish
+        };
+        Overflow(kind)
+    }
+}
