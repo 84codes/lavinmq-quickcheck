@@ -5,8 +5,8 @@ use lapin::{
     BasicProperties, Connection, ConnectionProperties, ExchangeKind,
     options::{
         BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
-        ExchangeBindOptions, ExchangeDeclareOptions, ExchangeDeleteOptions,
-        QueueBindOptions, QueueDeclareOptions, QueueDeleteOptions,
+        ExchangeBindOptions, ExchangeDeclareOptions, ExchangeDeleteOptions, QueueBindOptions,
+        QueueDeclareOptions, QueueDeleteOptions,
     },
     types::{AMQPValue, FieldTable, ShortString},
 };

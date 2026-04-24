@@ -46,8 +46,8 @@ pub enum Binding {
     ExchangeToQueue { src: usize, dst: usize },
 }
 
-use std::collections::{HashMap, HashSet};
 use quickcheck::{Arbitrary, Gen};
+use std::collections::{HashMap, HashSet};
 
 /// Predicts the per-queue ack count for one message published at
 /// `exchanges[0]`. Keyed by queue index. Queues with zero acks are absent.
@@ -184,7 +184,11 @@ impl Arbitrary for Topology {
             }
         }
 
-        Topology { exchanges, queues, bindings }
+        Topology {
+            exchanges,
+            queues,
+            bindings,
+        }
     }
 }
 
@@ -198,7 +202,11 @@ mod simulator_tests {
     }
 
     fn qn(name: &str, dlx: Option<usize>, action: QueueAction) -> QueueNode {
-        QueueNode { name: name.into(), dlx, action }
+        QueueNode {
+            name: name.into(),
+            dlx,
+            action,
+        }
     }
 
     #[test]
@@ -366,10 +374,11 @@ mod generator_tests {
                 return false;
             }
             for b in &topo.bindings {
-                if let Binding::ExchangeToQueue { src, dst } = *b {
-                    if dst == qi && src >= dlx {
-                        return false;
-                    }
+                if let Binding::ExchangeToQueue { src, dst } = *b
+                    && dst == qi
+                    && src >= dlx
+                {
+                    return false;
                 }
             }
         }
