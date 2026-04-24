@@ -651,8 +651,9 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
 // ---------------------------------------------------------------------------
 
 use crate::properties::{
-    AppId, ClusterId, ContentEncoding, ContentType, CorrelationId, DeliveryMode, Expiration,
-    Headers, MessageId, MessageKind, MessageTimestamp, Priority, ReplyTo,
+    AppId, BasicPropertiesArgs, ClusterId, ContentEncoding, ContentType, CorrelationId,
+    DeliveryMode, Expiration, Headers, MessageId, MessageKind, MessageTimestamp, Priority,
+    ReplyTo,
 };
 
 async fn publish_with_props(
@@ -713,3 +714,12 @@ single_prop_publish_test!(publish_with_priority, Priority);
 single_prop_publish_test!(publish_with_timestamp, MessageTimestamp);
 single_prop_publish_test!(publish_with_expiration, Expiration);
 single_prop_publish_test!(publish_with_headers, Headers);
+
+#[quickcheck]
+fn publish_with_combined_properties(name: QueueName, args: BasicPropertiesArgs) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        publish_with_props(&channel, &name.0, args.apply()).await
+    })
+}

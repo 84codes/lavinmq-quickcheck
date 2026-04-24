@@ -278,3 +278,90 @@ impl Arbitrary for Headers {
         Headers(table)
     }
 }
+
+/// Combined `BasicPropertiesArgs` — all 13 optional BasicProperties fields
+/// (excluding `user_id`). Each field is independently generated; no field
+/// dependencies. The `apply()` method folds all set values into a
+/// `BasicProperties` via chainable setters.
+#[derive(Clone, Debug)]
+pub struct BasicPropertiesArgs {
+    pub content_type: Option<ContentType>,
+    pub content_encoding: Option<ContentEncoding>,
+    pub headers: Option<Headers>,
+    pub delivery_mode: Option<DeliveryMode>,
+    pub priority: Option<Priority>,
+    pub correlation_id: Option<CorrelationId>,
+    pub reply_to: Option<ReplyTo>,
+    pub expiration: Option<Expiration>,
+    pub message_id: Option<MessageId>,
+    pub timestamp: Option<MessageTimestamp>,
+    pub kind: Option<MessageKind>,
+    pub app_id: Option<AppId>,
+    pub cluster_id: Option<ClusterId>,
+}
+
+impl BasicPropertiesArgs {
+    pub fn apply(&self) -> BasicProperties {
+        let mut props = BasicProperties::default();
+        if let Some(v) = &self.content_type {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.content_encoding {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.headers {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.delivery_mode {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.priority {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.correlation_id {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.reply_to {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.expiration {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.message_id {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.timestamp {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.kind {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.app_id {
+            props = v.apply_to(props);
+        }
+        if let Some(v) = &self.cluster_id {
+            props = v.apply_to(props);
+        }
+        props
+    }
+}
+
+impl Arbitrary for BasicPropertiesArgs {
+    fn arbitrary(g: &mut Gen) -> Self {
+        BasicPropertiesArgs {
+            content_type: Option::arbitrary(g),
+            content_encoding: Option::arbitrary(g),
+            headers: Option::arbitrary(g),
+            delivery_mode: Option::arbitrary(g),
+            priority: Option::arbitrary(g),
+            correlation_id: Option::arbitrary(g),
+            reply_to: Option::arbitrary(g),
+            expiration: Option::arbitrary(g),
+            message_id: Option::arbitrary(g),
+            timestamp: Option::arbitrary(g),
+            kind: Option::arbitrary(g),
+            app_id: Option::arbitrary(g),
+            cluster_id: Option::arbitrary(g),
+        }
+    }
+}
