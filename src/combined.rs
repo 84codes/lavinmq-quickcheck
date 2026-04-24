@@ -120,3 +120,41 @@ impl Arbitrary for PriorityQueueArgs {
         }
     }
 }
+
+use crate::arguments::MaxAge;
+
+#[derive(Clone, Debug)]
+pub struct StreamQueueArgs {
+    pub max_length: Option<MaxLength>,
+    pub max_length_bytes: Option<MaxLengthBytes>,
+    pub max_age: Option<MaxAge>,
+}
+
+impl StreamQueueArgs {
+    /// Inserts all set arguments PLUS x-queue-type: "stream".
+    pub fn apply(&self, table: &mut FieldTable) {
+        table.insert(
+            lapin::types::ShortString::from("x-queue-type"),
+            lapin::types::AMQPValue::LongString("stream".into()),
+        );
+        if let Some(a) = &self.max_length {
+            a.insert_into(table);
+        }
+        if let Some(a) = &self.max_length_bytes {
+            a.insert_into(table);
+        }
+        if let Some(a) = &self.max_age {
+            a.insert_into(table);
+        }
+    }
+}
+
+impl Arbitrary for StreamQueueArgs {
+    fn arbitrary(g: &mut Gen) -> Self {
+        StreamQueueArgs {
+            max_length: Option::arbitrary(g),
+            max_length_bytes: Option::arbitrary(g),
+            max_age: Option::arbitrary(g),
+        }
+    }
+}

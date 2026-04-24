@@ -363,3 +363,23 @@ fn declare_priority_with_combined_args(name: QueueName, args: PriorityQueueArgs)
         declare_classic_ok(&channel, &name.0, table).await
     })
 }
+
+use crate::combined::StreamQueueArgs;
+
+#[quickcheck]
+fn declare_stream_with_combined_args(name: QueueName, args: StreamQueueArgs) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        let mut table = FieldTable::default();
+        args.apply(&mut table);
+        let ok = channel
+            .queue_declare(&name.0, stream_queue_opts(), table)
+            .await
+            .is_ok();
+        let _ = channel
+            .queue_delete(&name.0, QueueDeleteOptions::default())
+            .await;
+        ok
+    })
+}
