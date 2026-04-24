@@ -33,6 +33,18 @@ fn stream_queue_opts() -> QueueDeclareOptions {
     }
 }
 
+async fn declare_classic_ok(channel: &lapin::Channel, name: &str, args: FieldTable) -> bool {
+    let res = channel
+        .queue_declare(name, classic_queue_opts(), args)
+        .await
+        .is_ok();
+    // Cleanup (best-effort; ignore errors — channel may already be closed on failure).
+    let _ = channel
+        .queue_delete(name, QueueDeleteOptions::default())
+        .await;
+    res
+}
+
 #[quickcheck]
 fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -236,3 +248,32 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
         matches
     })
 }
+
+use crate::arguments::{
+    CacheSize, CacheTtl, ConsumerTimeout, DeliveryLimit, Expires, MaxLength, MaxLengthBytes,
+    MessageTtl,
+};
+
+macro_rules! single_arg_classic_test {
+    ($fn_name:ident, $ty:ty) => {
+        #[quickcheck]
+        fn $fn_name(name: QueueName, arg: $ty) -> bool {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let channel = connect_channel().await;
+                let mut table = FieldTable::default();
+                arg.insert_into(&mut table);
+                declare_classic_ok(&channel, &name.0, table).await
+            })
+        }
+    };
+}
+
+single_arg_classic_test!(declare_with_max_length, MaxLength);
+single_arg_classic_test!(declare_with_max_length_bytes, MaxLengthBytes);
+single_arg_classic_test!(declare_with_message_ttl, MessageTtl);
+single_arg_classic_test!(declare_with_expires, Expires);
+single_arg_classic_test!(declare_with_delivery_limit, DeliveryLimit);
+single_arg_classic_test!(declare_with_consumer_timeout, ConsumerTimeout);
+single_arg_classic_test!(declare_with_cache_size, CacheSize);
+single_arg_classic_test!(declare_with_cache_ttl, CacheTtl);

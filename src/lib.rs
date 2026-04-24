@@ -5,6 +5,7 @@
 //! broker.
 
 pub mod names;
+pub mod arguments;
 
 pub use names::{QueueName, RoutingKey, TopicRoutingKey};
 
