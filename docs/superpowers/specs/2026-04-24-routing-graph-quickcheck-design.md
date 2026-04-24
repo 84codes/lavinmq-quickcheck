@@ -88,51 +88,78 @@ pub enum Binding {
 }
 ```
 
-**DAG invariant:** exchanges occupy positions `0..n_ex` in the topological
-order; queues occupy positions `n_ex..n_ex+n_q`. Every edge (`Binding`,
-`QueueNode::dlx`) points strictly earlier-to-later in this order.
-Specifically, a queue's `dlx` is always an exchange, and all exchanges are
-topologically before all queues — so any `dlx: Some(i)` is valid.
+**DAG invariant (cutpoint scheme):** exchanges are laid out at positions
+`0..n_ex`. Each queue is assigned a "cutpoint" `k ∈ [0, n_ex]` (not
+stored on `QueueNode` — it lives only in the generator). The cutpoint
+carves the exchange axis into two halves for that queue:
+
+- E→Q bindings can come only from exchanges with index `< k` (the
+  "upstream" of the queue).
+- The queue's DLX (if set) must be an exchange with index `≥ k` (the
+  "downstream").
+
+When a rejected message leaves the queue via DLX it therefore jumps
+strictly forward in exchange-index space — from `< k` to `≥ k`. It can
+never reach an upstream exchange and never loops. The E→E binding graph
+is forward-only (`src < dst`), so all edges in the unfolded routing
+graph point forward. Termination is guaranteed.
+
+A naive "DLX = any exchange" scheme fails here: `Q₀ bound from E₀,
+Q₀.dlx = E₀` closes an immediate cycle. The cutpoint scheme eliminates
+that by construction.
 
 ## Arbitrary generation
 
 ```rust
 impl Arbitrary for Topology {
     fn arbitrary(g: &mut Gen) -> Self {
-        // 1. Pick sizes, clamped to sensible bounds.
-        let n_ex = g.choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>()).unwrap().clone();
-        let n_q  = g.choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>()).unwrap().clone();
+        let n_ex = *g.choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>()).unwrap();
+        let n_q  = *g.choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>()).unwrap();
 
-        // 2. Unique names with a per-test-run suffix so parallel or leaked
-        //    iterations don't collide on broker state.
-        let suffix: u64 = Arbitrary::arbitrary(g);
-        let exchanges = (0..n_ex)
-            .map(|i| ExchangeNode { name: format!("ex_{suffix:x}_{i}") })
+        let suffix: u64 = u64::arbitrary(g);
+
+        let exchanges: Vec<ExchangeNode> = (0..n_ex)
+            .map(|i| ExchangeNode { name: format!("qc_ex_{:x}_{}", suffix, i) })
             .collect();
 
-        // 3. Queues with optional DLX (uniform over exchange range) and a
-        //    random action.
-        let queues = (0..n_q).map(|i| QueueNode {
-            name: format!("q_{suffix:x}_{i}"),
-            dlx: if bool::arbitrary(g) {
-                Some(*g.choose(&(0..n_ex).collect::<Vec<_>>()).unwrap())
+        let mut queues: Vec<QueueNode> = Vec::with_capacity(n_q);
+        let mut bindings: Vec<Binding> = Vec::new();
+
+        for qi in 0..n_q {
+            // Each queue gets a cutpoint k ∈ [0, n_ex]. Upstream bindings
+            // must have src < k, DLX (if set) must have idx ≥ k.
+            let cutpoint = *g.choose(&(0..=n_ex).collect::<Vec<_>>()).unwrap();
+
+            let dlx = if cutpoint < n_ex && bool::arbitrary(g) {
+                Some(*g.choose(&(cutpoint..n_ex).collect::<Vec<_>>()).unwrap())
             } else {
                 None
-            },
-            action: if bool::arbitrary(g) { QueueAction::Ack } else { QueueAction::Reject },
-        }).collect();
+            };
 
-        // 4. Forward-only bindings. 50/50 per candidate edge.
-        let mut bindings = Vec::new();
+            let action = if bool::arbitrary(g) {
+                QueueAction::Ack
+            } else {
+                QueueAction::Reject
+            };
+
+            queues.push(QueueNode {
+                name: format!("qc_q_{:x}_{}", suffix, qi),
+                dlx,
+                action,
+            });
+
+            for src in 0..cutpoint {
+                if bool::arbitrary(g) {
+                    bindings.push(Binding::ExchangeToQueue { src, dst: qi });
+                }
+            }
+        }
+
+        // E→E bindings: forward-only in exchange index.
         for src in 0..n_ex {
             for dst in (src + 1)..n_ex {
                 if bool::arbitrary(g) {
                     bindings.push(Binding::ExchangeToExchange { src, dst });
-                }
-            }
-            for dst in 0..n_q {
-                if bool::arbitrary(g) {
-                    bindings.push(Binding::ExchangeToQueue { src, dst });
                 }
             }
         }

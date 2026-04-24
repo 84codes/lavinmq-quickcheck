@@ -1,10 +1,14 @@
 //! Routing-graph topology model: fanout exchanges, queues with optional
 //! dead-letter references, and forward-only bindings between them.
 //!
-//! Every topology produced by the Arbitrary impl is a DAG: nodes are
-//! ordered (exchanges first, then queues) and every edge points strictly
-//! later in that order. This guarantees simulation terminates and keeps
-//! real LavinMQ runs from looping indefinitely.
+//! Every topology produced by the Arbitrary impl is a DAG over the
+//! *unfolded* routing graph (bindings AND dead-letter transitions). The
+//! generator maintains this by giving each queue a "cutpoint" k ∈
+//! [0, n_ex]: E→Q bindings can come only from exchanges with index < k,
+//! and the queue's DLX (when set) must be an exchange with index ≥ k.
+//! Rejection therefore jumps strictly forward in exchange-index space,
+//! so no cycle can close — simulation terminates and real LavinMQ runs
+//! can't loop indefinitely.
 
 #[derive(Clone, Debug)]
 pub struct Topology {
@@ -88,7 +92,14 @@ enum Node {
 
 impl Arbitrary for Topology {
     fn arbitrary(g: &mut Gen) -> Self {
-        // 1. Pick sizes clamped into [1, 8], size-driven.
+        // Topologies generated here must form a DAG over the *unfolded*
+        // routing graph — including dead-letter edges. Exchanges are laid
+        // out in positions 0..n_ex. Each queue is assigned a "cutpoint"
+        // k ∈ [0, n_ex]: it can receive E→Q bindings only from exchanges
+        // with index < k, and its DLX must be an exchange with index ≥ k.
+        // After a reject, the message jumps strictly forward in exchange-
+        // index space, so no cycle can close.
+
         let n_ex = *g
             .choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>())
             .unwrap();
@@ -96,8 +107,6 @@ impl Arbitrary for Topology {
             .choose(&(1..=g.size().clamp(1, 8)).collect::<Vec<_>>())
             .unwrap();
 
-        // 2. Per-iteration random suffix so names don't collide with
-        //    earlier (possibly leaked) iterations on the broker.
         let suffix: u64 = u64::arbitrary(g);
 
         let exchanges: Vec<ExchangeNode> = (0..n_ex)
@@ -106,37 +115,45 @@ impl Arbitrary for Topology {
             })
             .collect();
 
-        let queues: Vec<QueueNode> = (0..n_q)
-            .map(|i| {
-                let dlx = if bool::arbitrary(g) {
-                    Some(*g.choose(&(0..n_ex).collect::<Vec<_>>()).unwrap())
-                } else {
-                    None
-                };
-                let action = if bool::arbitrary(g) {
-                    QueueAction::Ack
-                } else {
-                    QueueAction::Reject
-                };
-                QueueNode {
-                    name: format!("qc_q_{:x}_{}", suffix, i),
-                    dlx,
-                    action,
-                }
-            })
-            .collect();
+        let mut queues: Vec<QueueNode> = Vec::with_capacity(n_q);
+        let mut bindings: Vec<Binding> = Vec::new();
 
-        // 3. Forward-only bindings. 50/50 per candidate edge.
-        let mut bindings = Vec::new();
+        for qi in 0..n_q {
+            let cutpoint = *g.choose(&(0..=n_ex).collect::<Vec<_>>()).unwrap();
+
+            // DLX: Some exchange at index ≥ cutpoint, if any such exchange
+            // exists. Otherwise None.
+            let dlx = if cutpoint < n_ex && bool::arbitrary(g) {
+                Some(*g.choose(&(cutpoint..n_ex).collect::<Vec<_>>()).unwrap())
+            } else {
+                None
+            };
+
+            let action = if bool::arbitrary(g) {
+                QueueAction::Ack
+            } else {
+                QueueAction::Reject
+            };
+
+            queues.push(QueueNode {
+                name: format!("qc_q_{:x}_{}", suffix, qi),
+                dlx,
+                action,
+            });
+
+            // E→Q bindings: only from exchanges with index < cutpoint.
+            for src in 0..cutpoint {
+                if bool::arbitrary(g) {
+                    bindings.push(Binding::ExchangeToQueue { src, dst: qi });
+                }
+            }
+        }
+
+        // E→E bindings: forward-only in exchange index.
         for src in 0..n_ex {
             for dst in (src + 1)..n_ex {
                 if bool::arbitrary(g) {
                     bindings.push(Binding::ExchangeToExchange { src, dst });
-                }
-            }
-            for dst in 0..n_q {
-                if bool::arbitrary(g) {
-                    bindings.push(Binding::ExchangeToQueue { src, dst });
                 }
             }
         }
@@ -278,11 +295,19 @@ mod generator_tests {
                 }
             }
         }
-        // Every DLX reference is an in-bounds exchange.
-        for q in &topo.queues {
-            if let Some(dlx) = q.dlx {
-                if dlx >= topo.exchanges.len() {
-                    return false;
+        // DLX must be in-bounds AND, crucially, must be an exchange index
+        // strictly greater than every exchange that binds TO this queue.
+        // Otherwise rejected messages would loop back through the queue.
+        for (qi, q) in topo.queues.iter().enumerate() {
+            let Some(dlx) = q.dlx else { continue };
+            if dlx >= topo.exchanges.len() {
+                return false;
+            }
+            for b in &topo.bindings {
+                if let Binding::ExchangeToQueue { src, dst } = *b {
+                    if dst == qi && src >= dlx {
+                        return false;
+                    }
                 }
             }
         }
