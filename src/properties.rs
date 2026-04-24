@@ -152,3 +152,70 @@ impl Arbitrary for ClusterId {
         ClusterId(short_string(g, SHORT_STRING_MAX))
     }
 }
+
+/// `delivery_mode` — `1` (transient) or `2` (persistent).
+#[derive(Clone, Debug)]
+pub struct DeliveryMode(pub u8);
+
+impl DeliveryMode {
+    pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
+        props.with_delivery_mode(self.0)
+    }
+}
+
+impl Arbitrary for DeliveryMode {
+    fn arbitrary(g: &mut Gen) -> Self {
+        DeliveryMode(if bool::arbitrary(g) { 1 } else { 2 })
+    }
+}
+
+/// `priority` — 0..=9 (conservative bound; brokers accept higher but
+/// priority queues typically use 0-9).
+#[derive(Clone, Debug)]
+pub struct Priority(pub u8);
+
+impl Priority {
+    pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
+        props.with_priority(self.0)
+    }
+}
+
+impl Arbitrary for Priority {
+    fn arbitrary(g: &mut Gen) -> Self {
+        Priority(*g.choose(&(0u8..=9).collect::<Vec<_>>()).unwrap())
+    }
+}
+
+/// `timestamp` — arbitrary u64 unix timestamp.
+#[derive(Clone, Debug)]
+pub struct MessageTimestamp(pub u64);
+
+impl MessageTimestamp {
+    pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
+        props.with_timestamp(self.0)
+    }
+}
+
+impl Arbitrary for MessageTimestamp {
+    fn arbitrary(g: &mut Gen) -> Self {
+        MessageTimestamp(u64::arbitrary(g))
+    }
+}
+
+/// `expiration` — short string parsed as a stringified integer millisecond value.
+#[derive(Clone, Debug)]
+pub struct Expiration(pub String);
+
+impl Expiration {
+    pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
+        props.with_expiration(ShortString::from(self.0.clone()))
+    }
+}
+
+impl Arbitrary for Expiration {
+    fn arbitrary(g: &mut Gen) -> Self {
+        // LavinMQ parses this as an integer number of milliseconds.
+        // Generate any u32 formatted as decimal.
+        Expiration(format!("{}", u32::arbitrary(g)))
+    }
+}
