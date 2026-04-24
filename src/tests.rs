@@ -645,3 +645,56 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
         actual == expected
     })
 }
+
+// ---------------------------------------------------------------------------
+// BasicProperties publish-only tests
+// ---------------------------------------------------------------------------
+
+use crate::properties::ContentType;
+
+async fn publish_with_props(
+    channel: &lapin::Channel,
+    name: &str,
+    props: BasicProperties,
+) -> bool {
+    let declared = channel
+        .queue_declare(name, classic_queue_opts(), FieldTable::default())
+        .await
+        .is_ok();
+    if !declared {
+        return false;
+    }
+    let res = channel
+        .basic_publish(
+            "",
+            name,
+            BasicPublishOptions::default(),
+            b"",
+            props,
+        )
+        .await;
+    let ok = match res {
+        Ok(confirm) => confirm.await.is_ok(),
+        Err(_) => false,
+    };
+    let _ = channel
+        .queue_delete(name, QueueDeleteOptions::default())
+        .await;
+    ok
+}
+
+macro_rules! single_prop_publish_test {
+    ($fn_name:ident, $ty:ty) => {
+        #[quickcheck]
+        fn $fn_name(name: QueueName, prop: $ty) -> bool {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let channel = connect_channel().await;
+                let props = prop.apply_to(BasicProperties::default());
+                publish_with_props(&channel, &name.0, props).await
+            })
+        }
+    };
+}
+
+single_prop_publish_test!(publish_with_content_type, ContentType);

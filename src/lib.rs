@@ -7,6 +7,7 @@
 pub mod arguments;
 pub mod combined;
 pub mod names;
+pub mod properties;
 pub mod routing;
 
 pub use names::{QueueName, RoutingKey, TopicRoutingKey};
