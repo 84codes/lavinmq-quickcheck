@@ -10,19 +10,34 @@ use lapin::{
 };
 use quickcheck_macros::quickcheck;
 
+async fn connect_channel() -> lapin::Channel {
+    let conn = Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
+        .await
+        .expect("Failed to connect to LavinMQ");
+    conn.create_channel()
+        .await
+        .expect("Failed to create channel")
+}
+
+fn classic_queue_opts() -> QueueDeclareOptions {
+    QueueDeclareOptions {
+        auto_delete: true,
+        ..QueueDeclareOptions::default()
+    }
+}
+
+fn stream_queue_opts() -> QueueDeclareOptions {
+    QueueDeclareOptions {
+        durable: true,
+        ..QueueDeclareOptions::default()
+    }
+}
+
 #[quickcheck]
 fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let conn =
-            Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
-                .await
-                .expect("Failed to connect to RabbitMQ");
-
-        let channel = conn
-            .create_channel()
-            .await
-            .expect("Failed to create channel");
+        let channel = connect_channel().await;
 
         let queue_opts = QueueDeclareOptions {
             auto_delete: true,
@@ -82,15 +97,7 @@ fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
 fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let conn =
-            Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
-                .await
-                .expect("Failed to connect to RabbitMQ");
-
-        let channel = conn
-            .create_channel()
-            .await
-            .expect("Failed to create channel");
+        let channel = connect_channel().await;
 
         let queue_opts = QueueDeclareOptions {
             auto_delete: true,
@@ -162,15 +169,7 @@ fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool
 fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let conn =
-            Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
-                .await
-                .expect("Failed to connect to RabbitMQ");
-
-        let channel = conn
-            .create_channel()
-            .await
-            .expect("Failed to create channel");
+        let channel = connect_channel().await;
 
         let queue_opts = QueueDeclareOptions {
             auto_delete: true,
