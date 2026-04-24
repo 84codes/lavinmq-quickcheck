@@ -45,6 +45,21 @@ async fn declare_classic_ok(channel: &lapin::Channel, name: &str, args: FieldTab
     res
 }
 
+async fn declare_stream_ok(channel: &lapin::Channel, name: &str, mut args: FieldTable) -> bool {
+    args.insert(
+        lapin::types::ShortString::from("x-queue-type"),
+        lapin::types::AMQPValue::LongString("stream".into()),
+    );
+    let res = channel
+        .queue_declare(name, stream_queue_opts(), args)
+        .await
+        .is_ok();
+    let _ = channel
+        .queue_delete(name, QueueDeleteOptions::default())
+        .await;
+    res
+}
+
 #[quickcheck]
 fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -303,3 +318,22 @@ fn declare_with_dead_letter_routing_key(name: QueueName, arg: DeadLetterRoutingK
 }
 
 single_arg_classic_test!(declare_with_max_priority, MaxPriority);
+
+use crate::arguments::MaxAge;
+
+macro_rules! single_arg_stream_test {
+    ($fn_name:ident, $ty:ty) => {
+        #[quickcheck]
+        fn $fn_name(name: QueueName, arg: $ty) -> bool {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let channel = connect_channel().await;
+                let mut table = FieldTable::default();
+                arg.insert_into(&mut table);
+                declare_stream_ok(&channel, &name.0, table).await
+            })
+        }
+    };
+}
+
+single_arg_stream_test!(declare_stream_with_max_age, MaxAge);

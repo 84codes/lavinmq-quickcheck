@@ -335,3 +335,27 @@ impl Arbitrary for MaxPriority {
         MaxPriority(u8::arbitrary(g))
     }
 }
+
+/// `x-max-age` — stream retention by age. Format: N + unit, where
+/// unit ∈ {Y, M, D, h, m, s}. Example: "7D", "12h".
+#[derive(Clone, Debug)]
+pub struct MaxAge(pub String);
+
+const MAX_AGE_UNITS: &[char] = &['Y', 'M', 'D', 'h', 'm', 's'];
+
+impl MaxAge {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-max-age"),
+            AMQPValue::LongString(self.0.clone().into()),
+        );
+    }
+}
+
+impl Arbitrary for MaxAge {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let n = *g.choose(&(1u32..=999).collect::<Vec<_>>()).unwrap();
+        let unit = *g.choose(MAX_AGE_UNITS).unwrap();
+        MaxAge(format!("{}{}", n, unit))
+    }
+}
