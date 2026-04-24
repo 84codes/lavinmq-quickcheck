@@ -1,0 +1,13 @@
+[package]
+name = "amqp-quickcheck"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+quickcheck = "1"
+
+[dev-dependencies]
+quickcheck_macros = "1"
+lapin = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-lite = "2"
