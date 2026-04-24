@@ -46,40 +46,66 @@ pub enum Binding {
     ExchangeToQueue { src: usize, dst: usize },
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use quickcheck::{Arbitrary, Gen};
 
 /// Predicts the per-queue ack count for one message published at
 /// `exchanges[0]`. Keyed by queue index. Queues with zero acks are absent.
+///
+/// LavinMQ (like RabbitMQ) implements loop detection / deduplication for
+/// message routing: within a single routing traversal (a single message
+/// delivery pass), each exchange and each queue is visited at most once.
+/// This prevents loops and avoids duplicate deliveries through diamond paths.
+///
+/// Dead-letter transitions are treated as fresh message publications:
+/// the dead-lettered message starts routing at the DLX with its own fresh
+/// visited sets, so it can reach exchanges and queues that were already
+/// visited during the original routing pass.
 pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
     let mut delivered: HashMap<usize, u32> = HashMap::new();
-    let mut stack: Vec<Node> = vec![Node::Exchange(0)];
-    while let Some(node) = stack.pop() {
-        match node {
-            Node::Exchange(ex) => {
-                for b in &topo.bindings {
-                    match *b {
-                        Binding::ExchangeToExchange { src, dst } if src == ex => {
-                            stack.push(Node::Exchange(dst));
+    // Work queue of (exchange_index, already_visited_exchanges, already_visited_queues)
+    // tuples representing independent message delivery events.
+    let mut work: Vec<(usize, HashSet<usize>, HashSet<usize>)> =
+        vec![(0, HashSet::new(), HashSet::new())];
+    while let Some((start_ex, mut visited_exchanges, mut visited_queues)) = work.pop() {
+        // BFS/DFS within one routing event using per-event visited sets.
+        let mut stack: Vec<Node> = vec![Node::Exchange(start_ex)];
+        while let Some(node) = stack.pop() {
+            match node {
+                Node::Exchange(ex) => {
+                    if !visited_exchanges.insert(ex) {
+                        continue;
+                    }
+                    for b in &topo.bindings {
+                        match *b {
+                            Binding::ExchangeToExchange { src, dst } if src == ex => {
+                                stack.push(Node::Exchange(dst));
+                            }
+                            Binding::ExchangeToQueue { src, dst } if src == ex => {
+                                stack.push(Node::Queue(dst));
+                            }
+                            _ => {}
                         }
-                        Binding::ExchangeToQueue { src, dst } if src == ex => {
-                            stack.push(Node::Queue(dst));
+                    }
+                }
+                Node::Queue(q) => {
+                    if !visited_queues.insert(q) {
+                        continue;
+                    }
+                    match topo.queues[q].action {
+                        QueueAction::Ack => {
+                            *delivered.entry(q).or_insert(0) += 1;
                         }
-                        _ => {}
+                        QueueAction::Reject => {
+                            if let Some(dlx) = topo.queues[q].dlx {
+                                // Dead-letter: start a fresh routing event at the DLX.
+                                work.push((dlx, HashSet::new(), HashSet::new()));
+                            }
+                            // else: LavinMQ drops the message; nothing to record.
+                        }
                     }
                 }
             }
-            Node::Queue(q) => match topo.queues[q].action {
-                QueueAction::Ack => {
-                    *delivered.entry(q).or_insert(0) += 1;
-                }
-                QueueAction::Reject => {
-                    if let Some(dlx) = topo.queues[q].dlx {
-                        stack.push(Node::Exchange(dlx));
-                    }
-                    // else: LavinMQ drops the message; nothing to record.
-                }
-            },
         }
     }
     delivered
@@ -252,10 +278,12 @@ mod simulator_tests {
     }
 
     #[test]
-    fn multi_path_convergence_duplicates_at_target() {
+    fn multi_path_queue_dedup_delivers_once() {
         // e0 → e1 → q0   (path A)
         // e0 → q0        (path B)
-        // q0 gets 2 copies.
+        // q0 gets 1 delivery: LavinMQ deduplicates queue deliveries so even
+        // though two different exchanges have an E→Q binding to q0, it is
+        // only delivered once.
         let topo = Topology {
             exchanges: vec![ex("e0"), ex("e1")],
             queues: vec![qn("q0", None, QueueAction::Ack)],
@@ -265,7 +293,41 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 0, dst: 0 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 2)]));
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    #[test]
+    fn diamond_exchange_dedup_delivers_once() {
+        // e0 → e1 → e2 → q0
+        // e0 → e2         (q0 gets 1, not 2: e2 visited only once)
+        let topo = Topology {
+            exchanges: vec![ex("e0"), ex("e1"), ex("e2")],
+            queues: vec![qn("q0", None, QueueAction::Ack)],
+            bindings: vec![
+                Binding::ExchangeToExchange { src: 0, dst: 1 },
+                Binding::ExchangeToExchange { src: 0, dst: 2 },
+                Binding::ExchangeToExchange { src: 1, dst: 2 },
+                Binding::ExchangeToQueue { src: 2, dst: 0 },
+            ],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    #[test]
+    fn two_independent_queues_each_get_one() {
+        // e0 → q0 and e0 → q1: two distinct queues each get one copy.
+        let topo = Topology {
+            exchanges: vec![ex("e0")],
+            queues: vec![
+                qn("q0", None, QueueAction::Ack),
+                qn("q1", None, QueueAction::Ack),
+            ],
+            bindings: vec![
+                Binding::ExchangeToQueue { src: 0, dst: 0 },
+                Binding::ExchangeToQueue { src: 0, dst: 1 },
+            ],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
     }
 }
 

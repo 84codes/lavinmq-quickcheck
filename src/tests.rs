@@ -1,14 +1,20 @@
 use crate::names::{QueueName, RoutingKey, TopicRoutingKey};
+use crate::routing::{Binding, QueueAction, QueueNode, Topology, simulate};
 use futures_lite::StreamExt;
 use lapin::{
-    BasicProperties, Connection, ConnectionProperties,
+    BasicProperties, Connection, ConnectionProperties, ExchangeKind,
     options::{
-        BasicConsumeOptions, BasicPublishOptions, QueueBindOptions, QueueDeclareOptions,
-        QueueDeleteOptions,
+        BasicAckOptions, BasicConsumeOptions, BasicNackOptions, BasicPublishOptions,
+        ExchangeBindOptions, ExchangeDeclareOptions, ExchangeDeleteOptions,
+        QueueBindOptions, QueueDeclareOptions, QueueDeleteOptions,
     },
-    types::FieldTable,
+    types::{AMQPValue, FieldTable, ShortString},
 };
 use quickcheck_macros::quickcheck;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 async fn connect_channel() -> lapin::Channel {
     let conn = Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
@@ -435,3 +441,207 @@ stream_rejection_test!(stream_rejects_delivery_limit, DeliveryLimit);
 stream_rejection_test!(stream_rejects_overflow, Overflow);
 stream_rejection_test!(stream_rejects_single_active_consumer, SingleActiveConsumer);
 stream_rejection_test!(stream_rejects_max_priority, MaxPriority);
+
+// ---------------------------------------------------------------------------
+// Routing-graph test harness helpers (used by `routing_graph_delivers_expected`)
+// ---------------------------------------------------------------------------
+
+async fn declare_fanout(channel: &lapin::Channel, name: &str) {
+    channel
+        .exchange_declare(
+            name,
+            ExchangeKind::Fanout,
+            ExchangeDeclareOptions::default(),
+            FieldTable::default(),
+        )
+        .await
+        .expect("Failed to declare fanout exchange");
+}
+
+async fn declare_queue_for_routing(channel: &lapin::Channel, name: &str, args: FieldTable) {
+    channel
+        .queue_declare(name, QueueDeclareOptions::default(), args)
+        .await
+        .expect("Failed to declare queue");
+}
+
+async fn apply_binding(channel: &lapin::Channel, topo: &Topology, b: &Binding) {
+    match *b {
+        Binding::ExchangeToExchange { src, dst } => {
+            channel
+                .exchange_bind(
+                    &topo.exchanges[dst].name, // destination
+                    &topo.exchanges[src].name, // source
+                    "",
+                    ExchangeBindOptions::default(),
+                    FieldTable::default(),
+                )
+                .await
+                .expect("Failed to bind exchange to exchange");
+        }
+        Binding::ExchangeToQueue { src, dst } => {
+            channel
+                .queue_bind(
+                    &topo.queues[dst].name,
+                    &topo.exchanges[src].name,
+                    "",
+                    QueueBindOptions::default(),
+                    FieldTable::default(),
+                )
+                .await
+                .expect("Failed to bind queue to exchange");
+        }
+    }
+}
+
+/// Starts a consumer on `queue` that acks (if `Ack`) or nacks-requeue-false
+/// (if `Reject`) every delivery it receives. The counter is incremented
+/// ONLY for Ack events — Reject events are message transitions, already
+/// modelled by the simulator's graph traversal. Spawns the consumer loop
+/// onto the current tokio runtime; the task terminates when the consumer
+/// stream ends (e.g. on channel close or queue deletion).
+async fn spawn_consumer(channel: &lapin::Channel, queue: &QueueNode, counter: Arc<AtomicU32>) {
+    let mut consumer = channel
+        .basic_consume(
+            &queue.name,
+            &format!("consumer_{}", queue.name),
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        )
+        .await
+        .expect("Failed to start consumer");
+    let action = queue.action;
+    tokio::spawn(async move {
+        while let Some(delivery_result) = consumer.next().await {
+            let delivery = match delivery_result {
+                Ok(d) => d,
+                Err(_) => break,
+            };
+            match action {
+                QueueAction::Ack => {
+                    counter.fetch_add(1, Ordering::Relaxed);
+                    let _ = delivery.ack(BasicAckOptions::default()).await;
+                }
+                QueueAction::Reject => {
+                    let _ = delivery
+                        .nack(BasicNackOptions {
+                            requeue: false,
+                            ..BasicNackOptions::default()
+                        })
+                        .await;
+                }
+            }
+        }
+    });
+}
+
+async fn publish_probe(channel: &lapin::Channel, exchange: &str) {
+    channel
+        .basic_publish(
+            exchange,
+            "",
+            BasicPublishOptions::default(),
+            b"probe",
+            BasicProperties::default(),
+        )
+        .await
+        .expect("Failed to publish probe")
+        .await
+        .expect("Failed to confirm publish");
+}
+
+/// Polls the sum of all counters every 5 ms; returns once the total
+/// reaches `expected_total` or the timeout elapses. Returns immediately
+/// when `expected_total == 0` (nothing to wait for).
+async fn wait_for_total(counters: &[Arc<AtomicU32>], expected_total: u32, timeout: Duration) {
+    if expected_total == 0 {
+        return;
+    }
+    let start = std::time::Instant::now();
+    loop {
+        let total: u32 = counters.iter().map(|c| c.load(Ordering::Relaxed)).sum();
+        if total >= expected_total {
+            return;
+        }
+        if start.elapsed() >= timeout {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+async fn cleanup_topology(channel: &lapin::Channel, topo: &Topology) {
+    for q in &topo.queues {
+        let _ = channel
+            .queue_delete(&q.name, QueueDeleteOptions::default())
+            .await;
+    }
+    for ex in &topo.exchanges {
+        let _ = channel
+            .exchange_delete(&ex.name, ExchangeDeleteOptions::default())
+            .await;
+    }
+}
+
+#[quickcheck]
+fn routing_graph_delivers_expected(topo: Topology) -> bool {
+    let expected: HashMap<usize, u32> = simulate(&topo);
+    let expected_total: u32 = expected.values().sum();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+
+        // 1. Declare exchanges.
+        for ex in &topo.exchanges {
+            declare_fanout(&channel, &ex.name).await;
+        }
+
+        // 2. Declare queues (with x-dead-letter-exchange if DLX is set).
+        for q in &topo.queues {
+            let mut args = FieldTable::default();
+            if let Some(dlx) = q.dlx {
+                args.insert(
+                    ShortString::from("x-dead-letter-exchange"),
+                    AMQPValue::LongString(topo.exchanges[dlx].name.clone().into()),
+                );
+            }
+            declare_queue_for_routing(&channel, &q.name, args).await;
+        }
+
+        // 3. Apply bindings.
+        for b in &topo.bindings {
+            apply_binding(&channel, &topo, b).await;
+        }
+
+        // 4. Spawn per-queue consumers.
+        let counters: Vec<Arc<AtomicU32>> = (0..topo.queues.len())
+            .map(|_| Arc::new(AtomicU32::new(0)))
+            .collect();
+        for (i, q) in topo.queues.iter().enumerate() {
+            spawn_consumer(&channel, q, counters[i].clone()).await;
+        }
+
+        // 5. Publish one probe at exchange 0.
+        publish_probe(&channel, &topo.exchanges[0].name).await;
+
+        // 6. Wait for quiescence (500 ms deadline).
+        wait_for_total(&counters, expected_total, Duration::from_millis(500)).await;
+
+        // 7. Collect observed counts.
+        let actual: HashMap<usize, u32> = counters
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| {
+                let n = c.load(Ordering::Relaxed);
+                (n > 0).then_some((i, n))
+            })
+            .collect();
+
+        // 8. Cleanup (best-effort; runs even on mismatch so later iterations
+        //    don't trip over leftover state).
+        cleanup_topology(&channel, &topo).await;
+
+        actual == expected
+    })
+}
