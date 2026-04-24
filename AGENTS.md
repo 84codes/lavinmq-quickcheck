@@ -10,7 +10,7 @@
 # Build
 cargo build
 
-# Run all tests (requires a running RabbitMQ instance on localhost:5672)
+# Run all tests (requires a running LavinMQ instance on localhost:5672)
 cargo test
 
 # Check without building
@@ -68,7 +68,7 @@ Types follow the newtype pattern: `pub struct QueueName(pub String)`. The `Arbit
 When adding new types, follow the same pattern:
 1. Define a newtype wrapper with `#[derive(Clone, Debug)]`.
 2. Implement `Arbitrary` with domain-valid generation logic.
-3. Add integration tests that round-trip through RabbitMQ.
+3. Add integration tests that round-trip through LavinMQ.
 
 ### Testing Approach
 
