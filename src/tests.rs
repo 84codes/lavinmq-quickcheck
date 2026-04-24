@@ -60,6 +60,38 @@ async fn declare_stream_ok(channel: &lapin::Channel, name: &str, mut args: Field
     res
 }
 
+/// Returns true iff `queue_declare` fails with AMQP reply code 406 (PRECONDITION_FAILED).
+/// Uses a string-based check against the error's `Debug` output rather than matching on
+/// lapin's error enum variants, which change shape between 2.x versions. The Debug repr
+/// reliably contains either "406" (the numeric code) or "PRECONDITION_FAILED" (the name)
+/// for this broker-originated channel-close error.
+async fn declare_stream_rejects(
+    channel: &lapin::Channel,
+    name: &str,
+    mut args: FieldTable,
+) -> bool {
+    args.insert(
+        lapin::types::ShortString::from("x-queue-type"),
+        lapin::types::AMQPValue::LongString("stream".into()),
+    );
+    match channel
+        .queue_declare(name, stream_queue_opts(), args)
+        .await
+    {
+        Ok(_) => {
+            // Unexpected success — clean up so we don't leak.
+            let _ = channel
+                .queue_delete(name, QueueDeleteOptions::default())
+                .await;
+            false
+        }
+        Err(err) => {
+            let msg = format!("{err:?}");
+            msg.contains("406") || msg.contains("PRECONDITION_FAILED")
+        }
+    }
+}
+
 #[quickcheck]
 fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -383,3 +415,26 @@ fn declare_stream_with_combined_args(name: QueueName, args: StreamQueueArgs) -> 
         ok
     })
 }
+
+macro_rules! stream_rejection_test {
+    ($fn_name:ident, $ty:ty) => {
+        #[quickcheck]
+        fn $fn_name(name: QueueName, arg: $ty) -> bool {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let channel = connect_channel().await;
+                let mut table = FieldTable::default();
+                arg.insert_into(&mut table);
+                declare_stream_rejects(&channel, &name.0, table).await
+            })
+        }
+    };
+}
+
+stream_rejection_test!(stream_rejects_dead_letter_exchange, DeadLetterExchange);
+stream_rejection_test!(stream_rejects_dead_letter_routing_key, DeadLetterRoutingKey);
+stream_rejection_test!(stream_rejects_expires, Expires);
+stream_rejection_test!(stream_rejects_delivery_limit, DeliveryLimit);
+stream_rejection_test!(stream_rejects_overflow, Overflow);
+stream_rejection_test!(stream_rejects_single_active_consumer, SingleActiveConsumer);
+stream_rejection_test!(stream_rejects_max_priority, MaxPriority);
