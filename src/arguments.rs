@@ -36,7 +36,9 @@ impl MaxLengthBytes {
 
 impl Arbitrary for MaxLengthBytes {
     fn arbitrary(g: &mut Gen) -> Self {
-        // Cast to i64 via LongLongInt; clamp to non-negative range.
+        // AMQP long-long-int is signed. LavinMQ rejects negative byte limits,
+        // so mask to i64::MAX to stay non-negative after the `as i64` cast in
+        // insert_into.
         MaxLengthBytes(u64::arbitrary(g) & i64::MAX as u64)
     }
 }
