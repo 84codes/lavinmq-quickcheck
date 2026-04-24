@@ -152,7 +152,8 @@ Move the existing `#[cfg(test)] mod tests` block (lines 111–352 of the old `li
 
 ```rust
 // src/tests.rs
-#![cfg(test)]
+// (Module is cfg-gated by `#[cfg(test)] mod tests;` in lib.rs — no inner
+// attribute needed here.)
 
 use crate::names::{QueueName, RoutingKey, TopicRoutingKey};
 use futures_lite::StreamExt;

@@ -1,5 +1,3 @@
-#![cfg(test)]
-
 use crate::names::{QueueName, RoutingKey, TopicRoutingKey};
 use futures_lite::StreamExt;
 use lapin::{
