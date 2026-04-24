@@ -316,3 +316,22 @@ impl Arbitrary for DeduplicationHeader {
         DeduplicationHeader(name)
     }
 }
+
+/// `x-max-priority` — turns the queue into a priority queue (0..=255).
+#[derive(Clone, Debug)]
+pub struct MaxPriority(pub u8);
+
+impl MaxPriority {
+    pub fn insert_into(&self, table: &mut FieldTable) {
+        table.insert(
+            ShortString::from("x-max-priority"),
+            AMQPValue::ShortShortUInt(self.0),
+        );
+    }
+}
+
+impl Arbitrary for MaxPriority {
+    fn arbitrary(g: &mut Gen) -> Self {
+        MaxPriority(u8::arbitrary(g))
+    }
+}

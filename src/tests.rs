@@ -252,7 +252,7 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
 use crate::arguments::{
     CacheSize, CacheTtl, ConsumerTimeout, DeliveryLimit, DeadLetterExchange,
     DeadLetterRoutingKey, DeduplicationHeader, Expires, MaxLength, MaxLengthBytes,
-    MessageDeduplication, MessageTtl, Overflow, SingleActiveConsumer,
+    MaxPriority, MessageDeduplication, MessageTtl, Overflow, SingleActiveConsumer,
 };
 
 macro_rules! single_arg_classic_test {
@@ -301,3 +301,5 @@ fn declare_with_dead_letter_routing_key(name: QueueName, arg: DeadLetterRoutingK
         declare_classic_ok(&channel, &name.0, table).await
     })
 }
+
+single_arg_classic_test!(declare_with_max_priority, MaxPriority);
