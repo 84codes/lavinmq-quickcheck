@@ -929,3 +929,70 @@ fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
         seen == expected
     })
 }
+
+// ---------------------------------------------------------------------------
+// Delayed-message exchange tests
+// ---------------------------------------------------------------------------
+
+use crate::delayed::{DelayedScenario, declare_args};
+
+#[quickcheck]
+fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        let (kind, args) = declare_args(s.style, s.ty);
+        channel
+            .exchange_declare(&s.exchange, kind, ExchangeDeclareOptions::default(), args)
+            .await
+            .expect("Failed to declare delayed exchange");
+        declare_queue_for_routing(&channel, &s.queue, FieldTable::default()).await;
+        channel
+            .queue_bind(
+                &s.queue,
+                &s.exchange,
+                &s.routing_key,
+                QueueBindOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .expect("Failed to bind");
+
+        let mut headers = FieldTable::default();
+        headers.insert(ShortString::from("x-delay"), s.delay.0.clone());
+        channel
+            .basic_publish(
+                &s.exchange,
+                &s.routing_key,
+                BasicPublishOptions::default(),
+                b"delayed",
+                BasicProperties::default().with_headers(headers),
+            )
+            .await
+            .expect("Failed to publish");
+
+        let mut consumer = channel
+            .basic_consume(
+                &s.queue,
+                "delayed-consumer",
+                BasicConsumeOptions {
+                    no_ack: true,
+                    ..BasicConsumeOptions::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .expect("Failed to consume");
+        let arrived = tokio::time::timeout(Duration::from_secs(2), consumer.next())
+            .await
+            .is_ok_and(|d| d.is_some_and(|d| d.is_ok_and(|d| d.data == b"delayed")));
+
+        let _ = channel
+            .queue_delete(&s.queue, QueueDeleteOptions::default())
+            .await;
+        let _ = channel
+            .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
+            .await;
+        arrived
+    })
+}
