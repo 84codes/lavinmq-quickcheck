@@ -6,6 +6,7 @@
 
 pub mod arguments;
 pub mod combined;
+pub mod consistent_hash;
 pub mod names;
 pub mod properties;
 pub mod routing;
