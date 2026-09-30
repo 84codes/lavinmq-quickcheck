@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, and acyclic routing topologies (exchanges, queues, bindings, dead-lettering).
+`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), and consistent-hash exchange scenarios.
 
 ## Commands
 
@@ -39,6 +39,7 @@ src/
   names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey.
   arguments.rs  — Arbitrary impls for individual x-* queue arguments.
   combined.rs   — Arbitrary impls for combined argument sets per queue type.
+  consistent_hash.rs — Arbitrary x-consistent-hash scenarios: ring/jump, x-hash-on, weighted bind/unbind ops (weight ≤ 100), keys.
   properties.rs — Arbitrary newtypes for BasicProperties fields (each with apply_to), plus BasicPropertiesArgs.
   routing.rs    — Arbitrary Topology: fanout exchanges, queues with optional DLX, bindings; guaranteed acyclic.
   tests.rs      — #[cfg(test)] integration tests against a real broker.
