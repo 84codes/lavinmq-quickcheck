@@ -828,3 +828,104 @@ fn consistent_hash_is_deterministic(s: ConsistentHashScenario) -> bool {
         hits.iter().all(|[a, b]| a == b)
     })
 }
+
+// ---------------------------------------------------------------------------
+// Stream consumer x-stream-offset tests
+// ---------------------------------------------------------------------------
+
+use crate::stream_offset::StreamOffsetScenario;
+use lapin::options::BasicQosOptions;
+
+const SENTINEL: &[u8] = b"sentinel";
+
+async fn publish_confirmed(channel: &lapin::Channel, queue: &str, payload: &[u8]) {
+    channel
+        .basic_publish(
+            "",
+            queue,
+            BasicPublishOptions::default(),
+            payload,
+            BasicProperties::default(),
+        )
+        .await
+        .expect("Failed to publish")
+        .await
+        .expect("Failed to confirm publish");
+}
+
+/// Consumes (and acks) until the sentinel, returning the indices before it.
+async fn consume_until_sentinel(consumer: &mut lapin::Consumer) -> Vec<usize> {
+    let mut seen = Vec::new();
+    while let Some(delivery) = consumer.next().await {
+        let delivery = delivery.expect("Failed to receive delivery");
+        delivery
+            .ack(BasicAckOptions::default())
+            .await
+            .expect("Failed to ack");
+        if delivery.data == SENTINEL {
+            break;
+        }
+        seen.push(String::from_utf8(delivery.data).unwrap().parse().unwrap());
+    }
+    seen
+}
+
+#[quickcheck]
+fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
+    let expected: Vec<usize> = s.offset.expected(s.messages).collect();
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        channel
+            .basic_qos(100, BasicQosOptions::default())
+            .await
+            .expect("Failed to set prefetch");
+
+        let mut args = FieldTable::default();
+        args.insert(
+            ShortString::from("x-queue-type"),
+            AMQPValue::LongString("stream".into()),
+        );
+        channel
+            .queue_declare(&s.stream, stream_queue_opts(), args)
+            .await
+            .expect("Failed to declare stream");
+
+        for i in 0..s.messages {
+            publish_confirmed(&channel, &s.stream, i.to_string().as_bytes()).await;
+        }
+
+        let mut consume_args = FieldTable::default();
+        consume_args.insert(ShortString::from("x-stream-offset"), s.offset.to_amqp());
+        let mut consumer = channel
+            .basic_consume(
+                &s.stream,
+                &format!("{}-consumer", s.stream),
+                BasicConsumeOptions::default(),
+                consume_args,
+            )
+            .await
+            .expect("Failed to consume");
+
+        // The consumer's start offset is resolved before consume-ok, so the
+        // sentinel always lands after it.
+        publish_confirmed(&channel, &s.stream, SENTINEL).await;
+
+        let seen = tokio::time::timeout(
+            Duration::from_secs(5),
+            consume_until_sentinel(&mut consumer),
+        )
+        .await
+        .expect("Timed out waiting for sentinel");
+
+        let _ = channel
+            .queue_delete(&s.stream, QueueDeleteOptions::default())
+            .await;
+        seen == expected
+    })
+}
