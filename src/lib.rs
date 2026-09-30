@@ -10,6 +10,7 @@ pub mod consistent_hash;
 pub mod names;
 pub mod properties;
 pub mod routing;
+pub mod stream_offset;
 
 pub use names::{QueueName, RoutingKey, TopicRoutingKey};
 
