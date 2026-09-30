@@ -172,3 +172,5 @@ with the connection still usable.
 **How this crate covers it:** `delayed_exchange_long_name_is_clean_error`
 asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
 fixed. Run it with `cargo test -- --ignored`.
+
+**Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297)

@@ -1002,7 +1002,7 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
 /// connection stays usable. Ignored: LavinMQ currently aborts the whole
 /// connection instead (see `lavinmq-quirks.md` #5). Run with `--ignored`.
 #[quickcheck]
-#[ignore = "LavinMQ aborts the connection; see lavinmq-quirks.md #5"]
+#[ignore = "LavinMQ aborts the connection; cloudamqp/lavinmq#2297"]
 fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
