@@ -130,3 +130,45 @@ pinpointed the behaviour.
   fresh empty visited sets.
 
 See `src/routing.rs::simulate` for the implementation.
+
+## 4. Unreadable `x-delay` values mean "no delay"
+
+**Observed:** On a delayed exchange, any `x-delay` header LavinMQ can't
+convert to a `u32` is silently treated as `0`, and the message is
+delivered immediately. That covers negative integers of any width,
+integers above `u32::MAX`, floats and doubles (even ≥ 1 h), strings like
+`"3600000"`, booleans, timestamps and tables. Nothing is rejected.
+Reproduced on LavinMQ 2.10.0.
+
+**Why:** `SegmentPosition.make` reads the delay as
+`headers["x-delay"]?.try { |v| v.as?(Int).try(&.to_u32) } || 0u32 rescue 0u32`.
+A non-`Int` gives `nil → 0`, and an out-of-range `Int` raises
+`OverflowError`, which the `rescue` turns into `0`. The message still goes
+through the internal delayed queue, because the exchange only checks
+whether an `x-delay` header is *present*.
+
+**How this crate covers it:** `odd_x_delay_delivers_immediately` in
+`src/tests.rs` publishes an `OddDelay` (`src/delayed.rs`) and expects
+delivery within 2 s. Each odd value, read literally, would mean either no
+delay or at least an hour.
+
+## 5. Delayed exchange with a long name aborts the connection
+
+**Observed:** Declaring a delayed exchange whose name is 245–255 bytes
+aborts the client's whole TCP connection (lapin reports
+`IOError(ConnectionAborted)`), not just the channel. The broker itself
+stays healthy and no exchange is left behind. Reproduced on LavinMQ
+2.10.0.
+
+**Why:** The internal queue is named `amq.delayed-<exchange>` (12-byte
+prefix). `DelayedExchangeQueue.create` does
+`raise "Exchange name too long" if q_name.bytesize > MAX_NAME_LENGTH`
+(256). That is a plain Crystal exception, not an AMQP channel error, so
+it escapes as a connection-level failure.
+
+**Expected:** A channel-level error (e.g. 406 `PRECONDITION_FAILED`),
+with the connection still usable.
+
+**How this crate covers it:** `delayed_exchange_long_name_is_clean_error`
+asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
+fixed. Run it with `cargo test -- --ignored`.

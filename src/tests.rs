@@ -934,7 +934,7 @@ fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
 // Delayed-message exchange tests
 // ---------------------------------------------------------------------------
 
-use crate::delayed::{DelayedScenario, declare_args};
+use crate::delayed::{DelayedScenario, LongExchangeName, declare_args};
 
 #[quickcheck]
 fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
@@ -994,5 +994,52 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
             .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
             .await;
         arrived
+    })
+}
+
+/// Desired: a delayed exchange whose internal queue name would exceed
+/// LavinMQ's 256-byte cap is refused with a channel-level error, and the
+/// connection stays usable. Ignored: LavinMQ currently aborts the whole
+/// connection instead (see `lavinmq-quirks.md` #5). Run with `--ignored`.
+#[quickcheck]
+#[ignore = "LavinMQ aborts the connection; see lavinmq-quirks.md #5"]
+fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let conn = Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
+            .await
+            .expect("Failed to connect to LavinMQ");
+        let channel = conn
+            .create_channel()
+            .await
+            .expect("Failed to create channel");
+        let (kind, args) = declare_args(
+            crate::delayed::DeclareStyle::DelayedFlag,
+            crate::delayed::DelayedType::Direct,
+        );
+        let declared = channel
+            .exchange_declare(&name.0, kind, ExchangeDeclareOptions::default(), args)
+            .await;
+        if declared.is_ok() {
+            let _ = channel
+                .exchange_delete(&name.0, ExchangeDeleteOptions::default())
+                .await;
+            return false;
+        }
+        let Ok(probe) = conn.create_channel().await else {
+            return false;
+        };
+        probe
+            .exchange_declare(
+                "amq.direct",
+                ExchangeKind::Direct,
+                ExchangeDeclareOptions {
+                    passive: true,
+                    ..ExchangeDeclareOptions::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .is_ok()
     })
 }
