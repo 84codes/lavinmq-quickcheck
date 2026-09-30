@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, and stream consumer `x-stream-offset` values.
+`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, and delayed-message exchanges.
 
 ## Commands
 
@@ -42,6 +42,7 @@ src/
   consistent_hash.rs — Arbitrary x-consistent-hash scenarios: ring/jump, x-hash-on, weighted bind/unbind ops (weight ≤ 100), keys.
   properties.rs — Arbitrary newtypes for BasicProperties fields (each with apply_to), plus BasicPropertiesArgs.
   stream_offset.rs — Arbitrary x-stream-offset (first/next/int in every AMQP int width/timestamp extremes) + expected-delivery model.
+  delayed.rs    — Arbitrary delayed-exchange scenarios (both declare styles), odd x-delay values, over-long exchange names.
   routing.rs    — Arbitrary Topology: fanout exchanges, queues with optional DLX, bindings; guaranteed acyclic.
   tests.rs      — #[cfg(test)] integration tests against a real broker.
 Cargo.toml      — Package manifest (edition 2024).
@@ -101,3 +102,4 @@ Because `#[quickcheck]` requires synchronous functions returning `bool`, each te
 2. **Edition 2024** — This crate uses Rust edition `2024`. Ensure your toolchain is recent enough (`rustup update`).
 3. **Retry loop in `Arbitrary`** — `QueueName::arbitrary` uses a `loop` to reject reserved prefixes. This is safe because the probability of generating `amq.` prefix is vanishingly small, but it's technically unbounded.
 4. **No `shrink` implementation** — The `Arbitrary` impl only defines `arbitrary`, not `shrink`. QuickCheck will use default shrinking on the inner `String`, which may produce invalid names during shrink. If shrink-generated names cause test failures unrelated to the property, consider implementing `shrink` with domain constraints.
+5. **Ignored tests document LavinMQ bugs** — `#[ignore]`d tests assert the *desired* broker behaviour for known bugs (see `lavinmq-quirks.md`). Run them with `cargo test -- --ignored`; one passing means the bug is fixed and the `#[ignore]` can go.
