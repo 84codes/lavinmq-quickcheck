@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, and the full set of LavinMQ queue-declaration arguments.
+`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, and acyclic routing topologies (exchanges, queues, bindings, dead-lettering).
 
 ## Commands
 
@@ -39,6 +39,8 @@ src/
   names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey.
   arguments.rs  — Arbitrary impls for individual x-* queue arguments.
   combined.rs   — Arbitrary impls for combined argument sets per queue type.
+  properties.rs — Arbitrary newtypes for BasicProperties fields (each with apply_to), plus BasicPropertiesArgs.
+  routing.rs    — Arbitrary Topology: fanout exchanges, queues with optional DLX, bindings; guaranteed acyclic.
   tests.rs      — #[cfg(test)] integration tests against a real broker.
 Cargo.toml      — Package manifest (edition 2024).
 ```
@@ -51,7 +53,7 @@ This is a library crate (`lib.rs` is the root — no binary target).
 |--------------------|----------------------------------------------|----------------|
 | `quickcheck`       | Property-based testing framework + `Arbitrary` trait | Runtime dep |
 | `quickcheck_macros`| `#[quickcheck]` proc macro for test functions | Dev only       |
-| `lapin`            | Async AMQP client (used in tests)            | Dev only       |
+| `lapin`            | Async AMQP client (`BasicProperties` types; tests) | Runtime dep |
 | `tokio`            | Async runtime (multi-thread + macros)        | Dev only       |
 | `futures-lite`     | `StreamExt` for consuming AMQP messages      | Dev only       |
 
@@ -72,7 +74,7 @@ When adding new types, follow the same pattern:
 
 ### Testing Approach
 
-Tests are **integration-style property-based tests** inside `#[cfg(test)] mod tests` in `lib.rs`. They:
+Tests are **integration-style property-based tests** in `src/tests.rs` (declared as `#[cfg(test)] mod tests;` in `lib.rs`). They:
 
 - Use `#[quickcheck]` macro (not `#[test]`) to run property checks.
 - Accept generated types (`QueueName`, `Vec<u8>`, etc.) as function parameters.
