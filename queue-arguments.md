@@ -124,7 +124,7 @@ apply to consumers of stream queues.
 
 | Argument                              | Type                                              | Default  | Description |
 | ------------------------------------- | ------------------------------------------------- | -------- | ----------- |
-| `x-stream-offset`                     | integer \| timestamp \| `first` \| `next` \| `last` | `next` | Where to start reading. Integers are absolute offsets; timestamps seek by time. See `src/lavinmq/amqp/stream/stream_consumer.cr:23-68`. |
+| `x-stream-offset`                     | integer \| timestamp \| `first` \| `next` \| `last` | `next` | Where to start reading. Integers are absolute offsets, numbered from 1 (`0` also means the first message; above the last offset behaves like `next`). Negative `-N` (2.10+) starts at the last N messages, clamped to the first. Timestamps seek by time and are decoded as Unix **seconds**. `last` is the first message of the *last segment*, not the last message. See `src/lavinmq/amqp/stream/stream_consumer.cr:23-68`. |
 | `x-stream-automatic-offset-tracking`  | boolean                                           | `true` (except for `amq.ctag-*` consumer tags) | Server-side tracking of consumer offset for crash recovery. |
 | `x-stream-filter`                     | string \| table \| array                          | —        | Bloom-filter-based message filter. Accepts a comma-separated string, a JSON map, or an array of filter specs (including geo-spatial filters). See `src/lavinmq/amqp/stream/filters/filter.cr`. |
 | `x-filter-match-type`                 | string (`all` \| `any`)                           | `all`    | Whether all filters must match or any single one. |
