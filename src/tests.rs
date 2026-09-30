@@ -723,6 +723,7 @@ use lapin::options::{BasicGetOptions, ConfirmSelectOptions};
 async fn setup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScenario) {
     let mut args = FieldTable::default();
     s.algorithm.insert_into(&mut args);
+    s.hash_on.insert_into(&mut args);
     channel
         .exchange_declare(
             &s.exchange,
@@ -797,6 +798,15 @@ fn consistent_hash_is_deterministic(s: ConsistentHashScenario) -> bool {
 
         // Publish every key twice; confirms mean routing is done before drain.
         for (i, key) in s.keys.iter().enumerate() {
+            let mut props = BasicProperties::default();
+            if let (Some(h), Some(v)) = (&s.hash_on.0, &key.header) {
+                let mut headers = FieldTable::default();
+                headers.insert(
+                    ShortString::from(h.as_str()),
+                    AMQPValue::LongString(v.clone().into()),
+                );
+                props = props.with_headers(headers);
+            }
             for copy in 0..2 {
                 channel
                     .basic_publish(
@@ -804,7 +814,7 @@ fn consistent_hash_is_deterministic(s: ConsistentHashScenario) -> bool {
                         &key.routing_key,
                         BasicPublishOptions::default(),
                         format!("{i}:{copy}").as_bytes(),
-                        BasicProperties::default(),
+                        props.clone(),
                     )
                     .await
                     .expect("Failed to publish")
