@@ -712,3 +712,109 @@ fn publish_with_combined_properties(name: QueueName, args: BasicPropertiesArgs) 
         publish_with_props(&channel, &name.0, args.apply()).await
     })
 }
+
+// ---------------------------------------------------------------------------
+// Consistent-hash exchange tests
+// ---------------------------------------------------------------------------
+
+use crate::consistent_hash::{BindOp, ConsistentHashScenario};
+use lapin::options::{BasicGetOptions, ConfirmSelectOptions};
+
+async fn setup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScenario) {
+    let mut args = FieldTable::default();
+    s.algorithm.insert_into(&mut args);
+    channel
+        .exchange_declare(
+            &s.exchange,
+            ExchangeKind::Custom("x-consistent-hash".into()),
+            ExchangeDeclareOptions::default(),
+            args,
+        )
+        .await
+        .expect("Failed to declare consistent-hash exchange");
+    for q in &s.queues {
+        declare_queue_for_routing(channel, q, FieldTable::default()).await;
+    }
+    for op in &s.ops {
+        let queue = &s.queues[op.queue()];
+        let rk = op.weight().routing_key();
+        match op {
+            BindOp::Bind { .. } => channel
+                .queue_bind(
+                    queue,
+                    &s.exchange,
+                    &rk,
+                    QueueBindOptions::default(),
+                    FieldTable::default(),
+                )
+                .await
+                .expect("Failed to bind"),
+            BindOp::Unbind { .. } => channel
+                .queue_unbind(queue, &s.exchange, &rk, FieldTable::default())
+                .await
+                .expect("Failed to unbind"),
+        }
+    }
+}
+
+/// Drains every queue, returning for each (key, copy) the queue indices
+/// that received it.
+async fn drain_hits(channel: &lapin::Channel, s: &ConsistentHashScenario) -> Vec<[Vec<usize>; 2]> {
+    let mut hits = vec![[Vec::new(), Vec::new()]; s.keys.len()];
+    for (qi, q) in s.queues.iter().enumerate() {
+        while let Some(msg) = channel
+            .basic_get(q, BasicGetOptions { no_ack: true })
+            .await
+            .expect("Failed to basic_get")
+        {
+            let tag = String::from_utf8(msg.delivery.data).unwrap();
+            let (key, copy) = tag.split_once(':').unwrap();
+            hits[key.parse::<usize>().unwrap()][copy.parse::<usize>().unwrap()].push(qi);
+        }
+    }
+    hits
+}
+
+async fn cleanup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScenario) {
+    for q in &s.queues {
+        let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
+    }
+    let _ = channel
+        .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
+        .await;
+}
+
+#[quickcheck]
+fn consistent_hash_is_deterministic(s: ConsistentHashScenario) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        setup_consistent_hash(&channel, &s).await;
+
+        // Publish every key twice; confirms mean routing is done before drain.
+        for (i, key) in s.keys.iter().enumerate() {
+            for copy in 0..2 {
+                channel
+                    .basic_publish(
+                        &s.exchange,
+                        &key.routing_key,
+                        BasicPublishOptions::default(),
+                        format!("{i}:{copy}").as_bytes(),
+                        BasicProperties::default(),
+                    )
+                    .await
+                    .expect("Failed to publish")
+                    .await
+                    .expect("Failed to confirm publish");
+            }
+        }
+
+        let hits = drain_hits(&channel, &s).await;
+        cleanup_consistent_hash(&channel, &s).await;
+        hits.iter().all(|[a, b]| a == b)
+    })
+}
