@@ -5,7 +5,10 @@
 //! `last_offset = 0` and the first message gets offset 1.
 
 use lapin::types::AMQPValue;
+use quickcheck::{Arbitrary, Gen};
 use std::ops::Range;
+
+pub const MAX_MESSAGES: usize = 50;
 
 /// AMQP field-table integer encoding for an `x-stream-offset` value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -103,6 +106,49 @@ impl StreamOffset {
     }
 }
 
+impl Arbitrary for StreamOffset {
+    fn arbitrary(g: &mut Gen) -> Self {
+        match *g.choose(&[0, 1, 2, 3, 4]).unwrap() {
+            0 => StreamOffset::First,
+            1 => StreamOffset::Next,
+            2 => StreamOffset::Timestamp(
+                *g.choose(&[TsExtreme::Epoch, TsExtreme::FarFuture]).unwrap(),
+            ),
+            _ => {
+                // Mostly small values around the message count, plus the
+                // bounds of every width.
+                let width = *g.choose(&IntWidth::ALL).unwrap();
+                let (lo, hi) = width.range();
+                let small = (-60..=60).filter(|v| width.fits(*v)).collect::<Vec<_>>();
+                let v = if bool::arbitrary(g) {
+                    *g.choose(&small).unwrap()
+                } else {
+                    *g.choose(&[lo, hi]).unwrap()
+                };
+                StreamOffset::Int(v, width)
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct StreamOffsetScenario {
+    pub stream: String,
+    /// Messages published before the consumer starts.
+    pub messages: usize,
+    pub offset: StreamOffset,
+}
+
+impl Arbitrary for StreamOffsetScenario {
+    fn arbitrary(g: &mut Gen) -> Self {
+        StreamOffsetScenario {
+            stream: format!("qc_stream_{:x}", u64::arbitrary(g)),
+            messages: *g.choose(&(0..=MAX_MESSAGES).collect::<Vec<_>>()).unwrap(),
+            offset: StreamOffset::arbitrary(g),
+        }
+    }
+}
+
 #[cfg(test)]
 mod model_tests {
     use super::*;
@@ -163,5 +209,24 @@ mod model_tests {
         for o in [StreamOffset::First, int(0), int(-3), int(7)] {
             assert!(o.expected(0).is_empty());
         }
+    }
+}
+
+#[cfg(test)]
+mod generator_tests {
+    use super::*;
+    use quickcheck_macros::quickcheck;
+
+    #[quickcheck]
+    fn int_offset_fits_its_width(o: StreamOffset) -> bool {
+        match o {
+            StreamOffset::Int(v, w) => w.fits(v),
+            _ => true,
+        }
+    }
+
+    #[quickcheck]
+    fn scenario_is_bounded(s: StreamOffsetScenario) -> bool {
+        s.messages <= MAX_MESSAGES && s.stream.starts_with("qc_stream_")
     }
 }
