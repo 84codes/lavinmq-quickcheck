@@ -1050,3 +1050,86 @@ fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
             .is_ok()
     })
 }
+
+// ---------------------------------------------------------------------------
+// Alternate-exchange edge cases
+// ---------------------------------------------------------------------------
+
+use crate::alternate::{AeCycle, MissingAe};
+use lapin::publisher_confirm::Confirmation;
+
+/// Publishes a mandatory message (confirms on) and returns the reply code
+/// of the basic.return, or `None` if the message was routed.
+async fn publish_mandatory(channel: &lapin::Channel, exchange: &str) -> Option<u16> {
+    let confirm = channel
+        .basic_publish(
+            exchange,
+            "",
+            BasicPublishOptions {
+                mandatory: true,
+                ..BasicPublishOptions::default()
+            },
+            b"probe",
+            BasicProperties::default(),
+        )
+        .await
+        .expect("Failed to publish")
+        .await
+        .expect("Failed to confirm publish");
+    match confirm {
+        Confirmation::Ack(Some(ret)) | Confirmation::Nack(Some(ret)) => Some(ret.reply_code),
+        _ => None,
+    }
+}
+
+async fn declare_with_ae(channel: &lapin::Channel, name: &str, ae: &str, key: &str) {
+    let mut args = FieldTable::default();
+    args.insert(ShortString::from(key), AMQPValue::LongString(ae.into()));
+    declare_fanout(channel, name, args).await;
+}
+
+#[quickcheck]
+fn ae_cycle_terminates_and_returns(c: AeCycle) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        let n = c.exchanges.len();
+        for (i, (name, spelling)) in c.exchanges.iter().enumerate() {
+            let next = &c.exchanges[(i + 1) % n].0;
+            declare_with_ae(&channel, name, next, spelling.key()).await;
+        }
+        let code = tokio::time::timeout(
+            Duration::from_secs(2),
+            publish_mandatory(&channel, &c.exchanges[0].0),
+        )
+        .await;
+        for (name, _) in &c.exchanges {
+            let _ = channel
+                .exchange_delete(name, ExchangeDeleteOptions::default())
+                .await;
+        }
+        matches!(code, Ok(Some(312)))
+    })
+}
+
+#[quickcheck]
+fn missing_ae_returns_mandatory(m: MissingAe) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        declare_with_ae(&channel, &m.exchange, &m.missing, m.spelling.key()).await;
+        let code = publish_mandatory(&channel, &m.exchange).await;
+        let _ = channel
+            .exchange_delete(&m.exchange, ExchangeDeleteOptions::default())
+            .await;
+        code == Some(312)
+    })
+}
