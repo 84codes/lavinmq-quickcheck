@@ -23,7 +23,7 @@ static FRESH_VHOSTS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 /// others running in parallel. Its first use in a run deletes and
 /// recreates it, so leftovers from earlier runs are gone. The cases within
 /// one test function run sequentially and share it.
-fn test_vhost(test: &str) -> String {
+pub(crate) fn test_vhost(test: &str) -> String {
     let vhost = format!("qc-{test}");
     let mut fresh = FRESH_VHOSTS.lock().unwrap();
     if fresh.get_or_insert_with(HashSet::new).insert(vhost.clone()) {
@@ -38,7 +38,7 @@ fn test_vhost(test: &str) -> String {
     vhost
 }
 
-async fn connect(test: &str) -> Connection {
+pub(crate) async fn connect(test: &str) -> Connection {
     let uri = format!("amqp://localhost:5672/{}", test_vhost(test));
     Connection::connect(&uri, ConnectionProperties::default())
         .await
@@ -1161,9 +1161,9 @@ fn missing_ae_returns_mandatory(m: MissingAe) -> bool {
 
 use crate::alternate::PolicyAe;
 
-const MGMT: &str = "http://localhost:15672/api";
+pub(crate) const MGMT: &str = "http://localhost:15672/api";
 /// `guest:guest`, base64.
-const MGMT_AUTH: &str = "Basic Z3Vlc3Q6Z3Vlc3Q=";
+pub(crate) const MGMT_AUTH: &str = "Basic Z3Vlc3Q6Z3Vlc3Q=";
 
 fn put_ae_policy(vhost: &str, name: &str, exchange: &str, ae: &str) {
     let body = format!(

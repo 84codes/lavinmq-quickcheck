@@ -12,3 +12,4 @@ quickcheck_macros = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 futures-lite = "2"
 ureq = { version = "3.4.2", default-features = false }
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }

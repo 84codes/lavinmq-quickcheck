@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, delayed-message exchanges, consumer `x-priority` values, and headers-exchange routing.
+`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. `src/http/` reuses them to check that the HTTP management API behaves like AMQP. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, delayed-message exchanges, consumer `x-priority` values, and headers-exchange routing.
 
 ## Commands
 
@@ -41,7 +41,7 @@ docker run -d --rm -p 5672:5672 -p 15672:15672 cloudamqp/lavinmq
 src/
   lib.rs        — Library root. Re-exports the public API.
   headers.rs    — Arbitrary headers-exchange scenarios (exchange/binding x-match, header-less messages, cross-typed values), LavinMQ matching model, invalid x-match values.
-  names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey.
+  names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey, LongName (254–257/300/1000 bytes, for length validation).
   alternate.rs  — Arbitrary AE edge cases: AE cycles, AE naming a missing exchange, AE argument vs policy.
   arguments.rs  — Arbitrary impls for individual x-* queue arguments.
   combined.rs   — Arbitrary impls for combined argument sets per queue type.
@@ -52,6 +52,17 @@ src/
   delayed.rs    — Arbitrary delayed-exchange scenarios (both declare styles), odd x-delay values, over-long exchange names.
   routing.rs    — Arbitrary Topology: fanout exchanges with optional alternate exchange, queues with optional DLX, bindings in shuffled order; guaranteed acyclic. simulate() models LavinMQ's order-dependent AE semantics.
   tests.rs      — #[cfg(test)] integration tests against a real broker.
+  http/         — #[cfg(test)] differential tests: same operation over AMQP (vhost qc-<fn>-amqp) and the HTTP API (qc-<fn>-http); outcomes must agree (diff::equivalent maps 406→400) and the resources must GET equal after normalize().
+    client.rs   — ureq wrapper (put/get/delete) + encode_segment (escapes `.` too).
+    diff.rs     — Outcome, AMQP→HTTP status mapping, equivalent_delete() (AMQP delete of a missing thing is ok, HTTP 404), normalize().
+    json.rs     — FieldTable → JSON (None for values JSON can't express, incl. f32).
+    message.rs  — BasicProperties → /publish JSON, json_safe_headers(), base64().
+    messages.rs — publish_parity (AMQP vs HTTP publish, read via /get) and get_parity (basic.get vs /get) + ignored quirks #11–#13.
+    harness.rs  — declare_parity(): runs 1–3 declarations of one name on both sides and compares.
+    queues.rs   — queue.declare vs PUT /queues parity (+ ignored amq. prefix quirk #9).
+    validation.rs — HTTP-only input validation (no AMQP side: lapin can't send >255-byte short strings): name/routing-key/property/header-key lengths via LongName, delayed names past the internal-queue limit, wrong JSON types; ignored quirks #5, #15–#17.
+    bindings.rs — bind/unbind parity (queue + exchange destinations, missing dest, headers args) + ignored properties_key quirk #10.
+    exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE).
 Cargo.toml      — Package manifest (edition 2024).
 ```
 
@@ -66,7 +77,8 @@ This is a library crate (`lib.rs` is the root — no binary target).
 | `lapin`            | Async AMQP client (`BasicProperties` types; tests) | Runtime dep |
 | `tokio`            | Async runtime (multi-thread + macros)        | Dev only       |
 | `futures-lite`     | `StreamExt` for consuming AMQP messages      | Dev only       |
-| `ureq`             | Sync HTTP client for the management API (policies) | Dev only |
+| `ureq`             | Sync HTTP client for the management API (policies, `src/http/`) | Dev only |
+| `serde_json`       | JSON for `src/http/` (`float_roundtrip`: the default parser can be 1 ULP off) | Dev only |
 
 ## Code Patterns
 

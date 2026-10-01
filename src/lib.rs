@@ -19,4 +19,6 @@ pub mod stream_offset;
 pub use names::{QueueName, RoutingKey, TopicRoutingKey};
 
 #[cfg(test)]
+mod http;
+#[cfg(test)]
 mod tests;

@@ -112,3 +112,47 @@ impl Arbitrary for TopicRoutingKey {
 // against the same alphabet. Stays crate-internal — not pub-reexported from lib.rs.
 pub(crate) const QUEUE_NAME_CHARS: &[u8] = VALID_CHARS;
 pub(crate) const RESERVED_QUEUE_PREFIX: &str = RESERVED_PREFIX;
+
+/// Lengths around the 255-byte short-string limit, plus some far past it.
+pub const LONG_NAME_LENGTHS: &[usize] = &[254, 255, 256, 257, 300, 1000];
+
+/// A queue-name-alphabet string of one of [`LONG_NAME_LENGTHS`], for
+/// testing length validation. Not `amq.`-prefixed.
+#[derive(Clone, Debug)]
+pub struct LongName(pub String);
+
+impl Arbitrary for LongName {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let len = *g.choose(LONG_NAME_LENGTHS).unwrap();
+        loop {
+            let name: String = (0..len)
+                .map(|_| *g.choose(VALID_CHARS).unwrap() as char)
+                .collect();
+            if !name.starts_with(RESERVED_PREFIX) {
+                return LongName(name);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod long_name_tests {
+    use super::*;
+    use quickcheck_macros::quickcheck;
+
+    #[quickcheck]
+    fn long_name_has_boundary_length_and_valid_chars(n: LongName) -> bool {
+        LONG_NAME_LENGTHS.contains(&n.0.len())
+            && n.0.bytes().all(|b| VALID_CHARS.contains(&b))
+            && !n.0.starts_with(RESERVED_PREFIX)
+    }
+
+    #[test]
+    fn long_name_covers_both_sides_of_the_limit() {
+        let mut g = Gen::new(100);
+        let lens: std::collections::HashSet<usize> = (0..500)
+            .map(|_| LongName::arbitrary(&mut g).0.len())
+            .collect();
+        assert!(lens.contains(&255) && lens.contains(&256));
+    }
+}

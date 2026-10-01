@@ -173,6 +173,13 @@ with the connection still usable.
 asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
 fixed. Run it with `cargo test -- --ignored`.
 
+**Over HTTP:** `PUT /api/exchanges/{vhost}/{name}` for the same names
+answers `500 Internal Server Error`, whichever way the exchange is made
+delayed (`x-delayed-message`, `x-delayed-exchange: true`, or the
+HTTP-only `"delayed": true` body field). Nothing is left behind.
+`delayed_long_name_is_bad_request` (in `src/http/validation.rs`) asserts
+a 400 and is `#[ignore]`d.
+
 **Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297)
 
 ## 6. Alternate exchanges fire per routing pass, not per exchange
@@ -266,3 +273,126 @@ on each point below.
 
 **Generator note:** the value alphabet leaves out `ShortString`, because
 lapin tags it `s` and LavinMQ decodes `s` as a 16-bit integer.
+
+## 9. HTTP API rejects reserved `amq.` names with 400, not 403
+
+**Observed:** Declaring a queue or exchange named `amq.*` over AMQP fails
+with 403 `ACCESS_REFUSED`. The same declaration over the HTTP API
+(`PUT /api/queues/{vhost}/{name}`, `PUT /api/exchanges/{vhost}/{name}`)
+answers `400 Bad Request` with the same reason text. Reproduced on
+LavinMQ 2.10.0.
+
+**Expected:** `403 Forbidden`, matching AMQP. The HTTP API already
+answers 403 to binding to the default exchange, which AMQP also refuses
+with 403.
+
+**How this crate covers it:** `reserved_prefix_parity` (in
+`src/http/queues.rs`) asserts the AMQP and HTTP outcomes agree and is
+`#[ignore]`d until LavinMQ is fixed.
+
+## 10. Binding `properties_key` collides for routing keys `""` and `"~"`
+
+**Observed:** The HTTP API identifies a binding by its `properties_key`:
+the routing key (or `~` if it is empty), plus `~<base64 of the
+arguments>` if it has arguments. A binding with routing key `""` and one
+with routing key `"~"` (same source, destination, no arguments) both get
+`properties_key` `"~"`. `DELETE /api/bindings/{vhost}/e/{x}/q/{q}/~`
+removes the `""` binding first. You can't target the `"~"` binding until
+it's the only one left. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** Each binding of a source/destination pair has its own
+`properties_key`, e.g. by escaping `~` in the routing key.
+
+**How this crate covers it:** `properties_keys_are_unique` (in
+`src/http/bindings.rs`) is `#[ignore]`d until LavinMQ is fixed.
+`RoutingKey` never generates `~`, so `binding_parity` doesn't hit it.
+
+## 11. `/get` and `/publish` spell `cluster_id` differently
+
+**Observed:** `POST /api/exchanges/{vhost}/{name}/publish` reads the
+`cluster_id` property from `properties.reserved`, as the OpenAPI spec says.
+`POST /api/queues/{vhost}/{name}/get` returns it as `properties.reserved1`.
+`/publish` silently ignores `reserved1`, so republishing a message read
+with `/get` drops its `cluster_id`. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** One spelling in both directions.
+
+**How this crate covers it:** `get_properties_republish_unchanged` (in
+`src/http/messages.rs`) is `#[ignore]`d. `publish_parity`/`get_parity`
+rename `reserved1` to `reserved` before comparing.
+
+## 12. Timestamps above `i64::MAX` over HTTP
+
+**Observed:** The AMQP `timestamp` property is an unsigned 64-bit integer.
+LavinMQ stores one above `i64::MAX` fine over AMQP, but `/get` renders it
+as a negative number (`u64::MAX` reads back as `-1`). `/publish` rejects
+such a timestamp with `400`. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** The unsigned value in both directions.
+
+**How this crate covers it:** `large_timestamp_round_trips` (in
+`src/http/messages.rs`) is `#[ignore]`d. `publish_parity`/`get_parity`
+discard cases with such timestamps.
+
+## 13. `/get` returns URL-safe base64
+
+**Observed:** `POST /api/queues/{vhost}/{name}/get` with
+`"encoding": "base64"` returns payloads in the URL-safe base64 alphabet
+(`-` and `_`). `/publish` with `"payload_encoding": "base64"` takes the
+standard alphabet (`+` and `/`), and a standard decoder fails on what
+`/get` returns. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** The standard alphabet (RFC 4648 §4), as `/publish` takes it.
+
+**How this crate covers it:** `get_payload_is_standard_base64` (in
+`src/http/messages.rs`) is `#[ignore]`d. `publish_parity`/`get_parity`
+translate the payload to the standard alphabet before comparing.
+
+## 15. HTTP accepts over-long short strings it never encodes
+
+**Observed:** AMQP short strings (routing keys, most message properties)
+are at most 255 bytes. The HTTP API only enforces that when it encodes the
+value into a message:
+
+- `POST /api/bindings/{vhost}/e/{x}/q/{q}` creates a binding whose routing
+  key is longer than 255 bytes. AMQP can't express that binding, and a
+  routed `/publish` with that key gets 400, so nothing can ever match it.
+- `/publish` of an *unroutable* message with an over-long routing key or
+  property (`message_id`, `correlation_id`, ...) answers 200
+  `{"routed": false}`. The same message routed gets 400 "Short string too
+  long, max 255".
+
+Reproduced on LavinMQ 2.10.0.
+
+**Expected:** 400 for any short-string field over 255 bytes, before
+routing.
+
+**How this crate covers it:** `binding_key_length_validated` and
+`unroutable_publish_field_length_validated` (in `src/http/validation.rs`)
+are `#[ignore]`d. `publish_field_length_validated` covers the routed case,
+which works.
+
+## 16. HTTP declare bodies coerce wrong JSON types to `false` / `{}`
+
+**Observed:** In `PUT /api/queues/...` and `PUT /api/exchanges/...`, a
+`durable`, `auto_delete` or `internal` that isn't a JSON boolean is
+accepted (201) and stored as `false`. That includes the string `"true"`,
+so `{"durable": "true"}` silently creates a non-durable queue. An
+`arguments` that isn't an object is accepted and stored as `{}`. Only an
+exchange's `type` is type-checked (400). Reproduced on LavinMQ 2.10.0.
+
+**Expected:** 400 for a field of the wrong type, like `type` gets.
+
+**How this crate covers it:** `wrong_json_types_rejected` (in
+`src/http/validation.rs`) is `#[ignore]`d.
+
+## 17. `/publish` with a header key over 255 bytes is a 500
+
+**Observed:** A `properties.headers` key longer than 255 bytes (a short
+string in AMQP field tables) makes `/publish` answer `500 Internal Server
+Error`, routed or not. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** 400, like an over-long routing key on a routed message.
+
+**How this crate covers it:** `header_key_length_validated` (in
+`src/http/validation.rs`) is `#[ignore]`d.

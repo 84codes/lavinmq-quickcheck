@@ -34,7 +34,7 @@ pub enum Key {
 impl Key {
     pub const ALL: [Key; 3] = [Key::A, Key::B, Key::C];
 
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             Key::A => "a",
             Key::B => "b",

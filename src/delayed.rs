@@ -29,7 +29,7 @@ impl DelayedType {
         }
     }
 
-    fn kind(&self) -> ExchangeKind {
+    pub fn kind(&self) -> ExchangeKind {
         match self {
             DelayedType::Direct => ExchangeKind::Direct,
             DelayedType::Fanout => ExchangeKind::Fanout,
