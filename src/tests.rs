@@ -446,13 +446,13 @@ stream_rejection_test!(stream_rejects_max_priority, MaxPriority);
 // Routing-graph test harness helpers (used by `routing_graph_delivers_expected`)
 // ---------------------------------------------------------------------------
 
-async fn declare_fanout(channel: &lapin::Channel, name: &str) {
+async fn declare_fanout(channel: &lapin::Channel, name: &str, args: FieldTable) {
     channel
         .exchange_declare(
             name,
             ExchangeKind::Fanout,
             ExchangeDeclareOptions::default(),
-            FieldTable::default(),
+            args,
         )
         .await
         .expect("Failed to declare fanout exchange");
@@ -594,7 +594,14 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
 
         // 1. Declare exchanges.
         for ex in &topo.exchanges {
-            declare_fanout(&channel, &ex.name).await;
+            let mut args = FieldTable::default();
+            if let Some(ae) = ex.ae {
+                args.insert(
+                    ShortString::from(ae.spelling.key()),
+                    AMQPValue::LongString(topo.exchanges[ae.target].name.clone().into()),
+                );
+            }
+            declare_fanout(&channel, &ex.name, args).await;
         }
 
         // 2. Declare queues (with x-dead-letter-exchange if DLX is set).

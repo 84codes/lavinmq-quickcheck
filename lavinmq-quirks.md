@@ -174,3 +174,37 @@ asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
 fixed. Run it with `cargo test -- --ignored`.
 
 **Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297)
+
+## 6. Alternate exchanges fire per routing pass, not per exchange
+
+**Observed:** LavinMQ hands a message to an exchange's alternate exchange
+only if the **whole routing pass** has found no queue yet when that
+exchange finishes walking its bindings. Bindings are walked in insertion
+order, so the outcome depends on binding order. Reproduced on LavinMQ
+2.10.0.
+
+Two cases where this differs from RabbitMQ:
+
+1. **Sibling order.** `e0` is bound to `q0` and to `e1`. `e1` has no
+   bindings and an AE leading to `q1`. If `e0 → q0` was bound first,
+   `q0` is already found when `e1` is visited, so `e1`'s AE is skipped
+   and only `q0` gets the message. If `e0 → e1` was bound first, the AE
+   fires and both get it. RabbitMQ fires `e1`'s AE either way.
+2. **Exchange-to-exchange bindings.** `e0` (AE → `e2` → `q0`) is bound
+   only to `e1`, which has no bindings. LavinMQ finds no queue, so
+   `e0`'s AE fires and `q0` gets the message. RabbitMQ counts `e1` as a
+   destination of `e0`, so `e0`'s AE does not fire.
+
+**Why:** `Exchange#find_queues` shares one `queues` set across the pass
+(including exchange-to-exchange hops) and checks
+`if queues.empty? && (ae_name = alternate_exchange)` after its own
+bindings. RabbitMQ's `process_alternate` only looks at what that
+exchange's own `route` returned, where exchange destinations count.
+
+**How this crate models it:** `simulate` in `src/routing.rs` walks
+bindings depth-first in insertion order, and fires an AE iff the pass's
+found-queue list is still empty. The generator shuffles binding order so
+both sibling orders get exercised. The unit tests
+`sub_exchange_ae_skipped_when_sibling_found_a_queue_first`,
+`sub_exchange_ae_fires_when_visited_before_sibling_queue` and
+`ae_fires_when_e2e_subtree_reaches_no_queue` pin the behaviour down.

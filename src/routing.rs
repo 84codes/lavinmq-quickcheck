@@ -21,6 +21,31 @@ pub struct Topology {
 #[derive(Clone, Debug)]
 pub struct ExchangeNode {
     pub name: String,
+    /// Optional alternate exchange. Always points forward in exchange index.
+    pub ae: Option<AlternateExchange>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AlternateExchange {
+    /// Exchange index.
+    pub target: usize,
+    pub spelling: AeSpelling,
+}
+
+/// LavinMQ accepts both the `x-` argument and the legacy unprefixed one.
+#[derive(Clone, Copy, Debug)]
+pub enum AeSpelling {
+    XAlternate,
+    Legacy,
+}
+
+impl AeSpelling {
+    pub fn key(&self) -> &'static str {
+        match self {
+            AeSpelling::XAlternate => "x-alternate-exchange",
+            AeSpelling::Legacy => "alternate-exchange",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -52,57 +77,29 @@ use std::collections::{HashMap, HashSet};
 /// Predicts the per-queue ack count for one message published at
 /// `exchanges[0]`. Keyed by queue index. Queues with zero acks are absent.
 ///
-/// LavinMQ (like RabbitMQ) implements loop detection / deduplication for
-/// message routing: within a single routing traversal (a single message
-/// delivery pass), each exchange and each queue is visited at most once.
-/// This prevents loops and avoids duplicate deliveries through diamond paths.
+/// Within one routing pass each exchange and each queue is visited at
+/// most once, so loops and diamond paths deliver one copy. Bindings are
+/// walked in insertion order. After walking its own bindings, an exchange
+/// hands the message to its alternate exchange iff the *whole pass* has
+/// found no queue yet (LavinMQ semantics; RabbitMQ instead fires an AE iff
+/// that exchange has no matching bindings). See `lavinmq-quirks.md`.
 ///
-/// Dead-letter transitions are treated as fresh message publications:
-/// the dead-lettered message starts routing at the DLX with its own fresh
-/// visited sets, so it can reach exchanges and queues that were already
-/// visited during the original routing pass.
+/// Dead-letter transitions start a fresh pass at the DLX, so they can
+/// reach exchanges and queues the original pass already visited.
 pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
     let mut delivered: HashMap<usize, u32> = HashMap::new();
-    // Work queue of (exchange_index, already_visited_exchanges, already_visited_queues)
-    // tuples representing independent message delivery events.
-    let mut work: Vec<(usize, HashSet<usize>, HashSet<usize>)> =
-        vec![(0, HashSet::new(), HashSet::new())];
-    while let Some((start_ex, mut visited_exchanges, mut visited_queues)) = work.pop() {
-        // BFS/DFS within one routing event using per-event visited sets.
-        let mut stack: Vec<Node> = vec![Node::Exchange(start_ex)];
-        while let Some(node) = stack.pop() {
-            match node {
-                Node::Exchange(ex) => {
-                    if !visited_exchanges.insert(ex) {
-                        continue;
-                    }
-                    for b in &topo.bindings {
-                        match *b {
-                            Binding::ExchangeToExchange { src, dst } if src == ex => {
-                                stack.push(Node::Exchange(dst));
-                            }
-                            Binding::ExchangeToQueue { src, dst } if src == ex => {
-                                stack.push(Node::Queue(dst));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                Node::Queue(q) => {
-                    if !visited_queues.insert(q) {
-                        continue;
-                    }
-                    match topo.queues[q].action {
-                        QueueAction::Ack => {
-                            *delivered.entry(q).or_insert(0) += 1;
-                        }
-                        QueueAction::Reject => {
-                            if let Some(dlx) = topo.queues[q].dlx {
-                                // Dead-letter: start a fresh routing event at the DLX.
-                                work.push((dlx, HashSet::new(), HashSet::new()));
-                            }
-                            // else: LavinMQ drops the message; nothing to record.
-                        }
+    let mut passes: Vec<usize> = vec![0];
+    while let Some(start) = passes.pop() {
+        let mut visited = HashSet::new();
+        let mut found = Vec::new();
+        visit_exchange(topo, start, &mut visited, &mut found);
+        for q in found {
+            match topo.queues[q].action {
+                QueueAction::Ack => *delivered.entry(q).or_insert(0) += 1,
+                QueueAction::Reject => {
+                    // Dead-letter as a fresh pass; without a DLX LavinMQ drops it.
+                    if let Some(dlx) = topo.queues[q].dlx {
+                        passes.push(dlx);
                     }
                 }
             }
@@ -111,9 +108,31 @@ pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
     delivered
 }
 
-enum Node {
-    Exchange(usize),
-    Queue(usize),
+fn visit_exchange(
+    topo: &Topology,
+    ex: usize,
+    visited: &mut HashSet<usize>,
+    found: &mut Vec<usize>,
+) {
+    if !visited.insert(ex) {
+        return;
+    }
+    for b in &topo.bindings {
+        match *b {
+            Binding::ExchangeToQueue { src, dst } if src == ex && !found.contains(&dst) => {
+                found.push(dst);
+            }
+            Binding::ExchangeToExchange { src, dst } if src == ex => {
+                visit_exchange(topo, dst, visited, found);
+            }
+            _ => {}
+        }
+    }
+    if found.is_empty()
+        && let Some(ae) = topo.exchanges[ex].ae
+    {
+        visit_exchange(topo, ae.target, visited, found);
+    }
 }
 
 impl Arbitrary for Topology {
@@ -138,6 +157,12 @@ impl Arbitrary for Topology {
         let exchanges: Vec<ExchangeNode> = (0..n_ex)
             .map(|i| ExchangeNode {
                 name: format!("qc_ex_{:x}_{}", suffix, i),
+                ae: (i + 1 < n_ex && bool::arbitrary(g)).then(|| AlternateExchange {
+                    target: *g.choose(&((i + 1)..n_ex).collect::<Vec<_>>()).unwrap(),
+                    spelling: *g
+                        .choose(&[AeSpelling::XAlternate, AeSpelling::Legacy])
+                        .unwrap(),
+                }),
             })
             .collect();
 
@@ -184,6 +209,12 @@ impl Arbitrary for Topology {
             }
         }
 
+        // Binding order matters to LavinMQ's routing, so mix E→Q and E→E.
+        for i in (1..bindings.len()).rev() {
+            let j = *g.choose(&(0..=i).collect::<Vec<_>>()).unwrap();
+            bindings.swap(i, j);
+        }
+
         Topology {
             exchanges,
             queues,
@@ -198,7 +229,112 @@ mod simulator_tests {
     use std::collections::HashMap;
 
     fn ex(name: &str) -> ExchangeNode {
-        ExchangeNode { name: name.into() }
+        ExchangeNode {
+            name: name.into(),
+            ae: None,
+        }
+    }
+
+    fn ex_ae(name: &str, target: usize) -> ExchangeNode {
+        ExchangeNode {
+            name: name.into(),
+            ae: Some(AlternateExchange {
+                target,
+                spelling: AeSpelling::XAlternate,
+            }),
+        }
+    }
+
+    fn q_ack(name: &str) -> QueueNode {
+        qn(name, None, QueueAction::Ack)
+    }
+
+    fn e2q(src: usize, dst: usize) -> Binding {
+        Binding::ExchangeToQueue { src, dst }
+    }
+
+    fn e2e(src: usize, dst: usize) -> Binding {
+        Binding::ExchangeToExchange { src, dst }
+    }
+
+    #[test]
+    fn ae_fires_when_exchange_has_no_bindings() {
+        let topo = Topology {
+            exchanges: vec![ex_ae("e0", 1), ex("e1")],
+            queues: vec![q_ack("q0")],
+            bindings: vec![e2q(1, 0)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    #[test]
+    fn ae_unused_when_exchange_routes() {
+        let topo = Topology {
+            exchanges: vec![ex_ae("e0", 1), ex("e1")],
+            queues: vec![q_ack("q0"), q_ack("q1")],
+            bindings: vec![e2q(0, 0), e2q(1, 1)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    #[test]
+    fn ae_chain_follows_each_unroutable_exchange() {
+        let topo = Topology {
+            exchanges: vec![ex_ae("e0", 1), ex_ae("e1", 2), ex("e2")],
+            queues: vec![q_ack("q0")],
+            bindings: vec![e2q(2, 0)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    // LavinMQ fires an exchange's AE only if the whole pass has found no
+    // queue yet, so sibling binding order decides (RabbitMQ: always fires).
+    #[test]
+    fn sub_exchange_ae_skipped_when_sibling_found_a_queue_first() {
+        // e0 → q0, then e0 → e1; e1 has no bindings, AE → e2 → q1.
+        let topo = Topology {
+            exchanges: vec![ex("e0"), ex_ae("e1", 2), ex("e2")],
+            queues: vec![q_ack("q0"), q_ack("q1")],
+            bindings: vec![e2q(0, 0), e2e(0, 1), e2q(2, 1)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    #[test]
+    fn sub_exchange_ae_fires_when_visited_before_sibling_queue() {
+        // Same graph, e0 → e1 bound before e0 → q0.
+        let topo = Topology {
+            exchanges: vec![ex("e0"), ex_ae("e1", 2), ex("e2")],
+            queues: vec![q_ack("q0"), q_ack("q1")],
+            bindings: vec![e2e(0, 1), e2q(0, 0), e2q(2, 1)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
+    }
+
+    // LavinMQ: an e2e binding whose subtree reaches no queue still leaves
+    // the pass empty, so the AE fires (RabbitMQ: the binding counts as a
+    // route and the AE does not fire).
+    #[test]
+    fn ae_fires_when_e2e_subtree_reaches_no_queue() {
+        // e0 (AE → e2) → e1, e1 has no bindings.
+        let topo = Topology {
+            exchanges: vec![ex_ae("e0", 2), ex("e1"), ex("e2")],
+            queues: vec![q_ack("q0")],
+            bindings: vec![e2e(0, 1), e2q(2, 0)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+    }
+
+    #[test]
+    fn ae_to_already_visited_exchange_is_skipped() {
+        // e0 → e1 (no bindings, AE → e2); e0 → e2 visited after; e2 → q0.
+        // e1's AE runs first and claims e2, so q0 still gets exactly one.
+        let topo = Topology {
+            exchanges: vec![ex("e0"), ex_ae("e1", 2), ex("e2")],
+            queues: vec![q_ack("q0")],
+            bindings: vec![e2e(0, 1), e2e(0, 2), e2q(2, 0)],
+        };
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
     }
 
     fn qn(name: &str, dlx: Option<usize>, action: QueueAction) -> QueueNode {
@@ -383,6 +519,13 @@ mod generator_tests {
             }
         }
         true
+    }
+
+    #[quickcheck]
+    fn alternate_exchanges_point_forward(topo: Topology) -> bool {
+        topo.exchanges.iter().enumerate().all(|(i, e)| {
+            e.ae.is_none_or(|ae| ae.target > i && ae.target < topo.exchanges.len())
+        })
     }
 
     #[quickcheck]
