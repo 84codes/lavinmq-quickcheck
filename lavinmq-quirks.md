@@ -208,3 +208,25 @@ both sibling orders get exercised. The unit tests
 `sub_exchange_ae_skipped_when_sibling_found_a_queue_first`,
 `sub_exchange_ae_fires_when_visited_before_sibling_queue` and
 `ae_fires_when_e2e_subtree_reaches_no_queue` pin the behaviour down.
+
+## 7. Consistent-hash exchange with `x-algorithm` stops routing after any policy change
+
+**Observed:** Creating or deleting *any* policy in the vhost, even one
+that matches nothing, makes a consistent-hash exchange declared with
+`x-algorithm` route nothing. Publishes are unroutable (`312 NO_ROUTE`),
+yet the bindings are still listed. Deleting the policy doesn't bring
+routing back. Without `x-algorithm` the exchange is unaffected.
+Reproduced on LavinMQ 2.10.0 with both `ring` and `jump`.
+
+**Why:** Every policy add or delete re-applies policies to every
+exchange, which ends in `handle_arguments`.
+`ConsistentHashExchange#handle_arguments` replaces `@hasher` with a new,
+empty one whenever `x-algorithm` is set. `@bindings` is kept, so the API
+still lists the bindings.
+
+**Consequence for this crate:** Any test that changes policies
+(`ae_argument_beats_policy`) breaks `consistent_hash_is_deterministic`
+if the two run at the same time against the same vhost. The failures
+look like "the first copies were delivered, everything after vanished".
+
+**Upstream:** [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300)
