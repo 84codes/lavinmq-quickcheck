@@ -1133,3 +1133,111 @@ fn missing_ae_returns_mandatory(m: MissingAe) -> bool {
         code == Some(312)
     })
 }
+
+use crate::alternate::PolicyAe;
+
+const MGMT: &str = "http://localhost:15672/api";
+/// `guest:guest`, base64.
+const MGMT_AUTH: &str = "Basic Z3Vlc3Q6Z3Vlc3Q=";
+
+fn put_ae_policy(name: &str, exchange: &str, ae: &str) {
+    let body = format!(
+        r#"{{"pattern":"^{exchange}$","apply-to":"exchanges","priority":10,"definition":{{"alternate-exchange":"{ae}"}}}}"#
+    );
+    ureq::put(format!("{MGMT}/policies/%2f/{name}"))
+        .header("Authorization", MGMT_AUTH)
+        .header("Content-Type", "application/json")
+        .send(body)
+        .expect("Failed to create policy");
+}
+
+fn delete_policy(name: &str) {
+    let _ = ureq::delete(format!("{MGMT}/policies/%2f/{name}"))
+        .header("Authorization", MGMT_AUTH)
+        .call();
+}
+
+/// Polls until LavinMQ reports `policy` as applied to `exchange`.
+async fn wait_for_policy(exchange: &str, policy: &str) -> bool {
+    let needle = format!(r#""policy":"{policy}""#);
+    for _ in 0..200 {
+        let applied = ureq::get(format!("{MGMT}/exchanges/%2f/{exchange}"))
+            .header("Authorization", MGMT_AUTH)
+            .call()
+            .ok()
+            .and_then(|mut r| r.body_mut().read_to_string().ok())
+            .is_some_and(|b| b.contains(&needle));
+        if applied {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    false
+}
+
+async fn queue_len(channel: &lapin::Channel, queue: &str) -> usize {
+    let mut n = 0;
+    while channel
+        .basic_get(queue, BasicGetOptions { no_ack: true })
+        .await
+        .expect("Failed to basic_get")
+        .is_some()
+    {
+        n += 1;
+    }
+    n
+}
+
+#[quickcheck]
+fn ae_argument_beats_policy(p: PolicyAe) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel().await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        for (ex, q) in [(&p.policy_ae, &p.policy_queue), (&p.arg_ae, &p.arg_queue)] {
+            declare_fanout(&channel, ex, FieldTable::default()).await;
+            declare_queue_for_routing(&channel, q, FieldTable::default()).await;
+            channel
+                .queue_bind(
+                    q,
+                    ex,
+                    "",
+                    QueueBindOptions::default(),
+                    FieldTable::default(),
+                )
+                .await
+                .expect("Failed to bind");
+        }
+        match p.arg_spelling {
+            Some(sp) => declare_with_ae(&channel, &p.exchange, &p.arg_ae, sp.key()).await,
+            None => declare_fanout(&channel, &p.exchange, FieldTable::default()).await,
+        }
+        put_ae_policy(&p.policy, &p.exchange, &p.policy_ae);
+        let applied = wait_for_policy(&p.exchange, &p.policy).await;
+
+        publish_probe(&channel, &p.exchange).await;
+        let got = (
+            queue_len(&channel, &p.policy_queue).await,
+            queue_len(&channel, &p.arg_queue).await,
+        );
+
+        delete_policy(&p.policy);
+        for q in [&p.policy_queue, &p.arg_queue] {
+            let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
+        }
+        for ex in [&p.exchange, &p.policy_ae, &p.arg_ae] {
+            let _ = channel
+                .exchange_delete(ex, ExchangeDeleteOptions::default())
+                .await;
+        }
+        let expected = if p.arg_spelling.is_some() {
+            (0, 1)
+        } else {
+            (1, 0)
+        };
+        applied && got == expected
+    })
+}

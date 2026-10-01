@@ -47,3 +47,32 @@ impl Arbitrary for MissingAe {
         }
     }
 }
+
+/// An exchange with no bindings that gets an AE from a policy and, maybe,
+/// a different one from its own argument (which should win).
+#[derive(Clone, Debug)]
+pub struct PolicyAe {
+    pub exchange: String,
+    pub policy: String,
+    pub policy_ae: String,
+    pub policy_queue: String,
+    pub arg_ae: String,
+    pub arg_queue: String,
+    /// `None` = no AE argument, only the policy.
+    pub arg_spelling: Option<AeSpelling>,
+}
+
+impl Arbitrary for PolicyAe {
+    fn arbitrary(g: &mut Gen) -> Self {
+        let s = format!("{:x}", u64::arbitrary(g));
+        PolicyAe {
+            exchange: format!("qc_aep_{s}"),
+            policy: format!("qc_aep_policy_{s}"),
+            policy_ae: format!("qc_aep_pae_{s}"),
+            policy_queue: format!("qc_aep_pq_{s}"),
+            arg_ae: format!("qc_aep_aae_{s}"),
+            arg_queue: format!("qc_aep_aq_{s}"),
+            arg_spelling: bool::arbitrary(g).then(|| spelling(g)),
+        }
+    }
+}
