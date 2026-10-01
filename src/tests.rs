@@ -1390,3 +1390,96 @@ fn invalid_x_priority_is_rejected(p: InvalidPriority) -> bool {
         is_406 && alive
     })
 }
+
+// ---------------------------------------------------------------------------
+// Headers exchange tests
+// ---------------------------------------------------------------------------
+
+use crate::headers::HeadersScenario;
+use std::collections::BTreeSet;
+
+#[quickcheck]
+fn headers_routing_matches_model(s: HeadersScenario) -> bool {
+    let expected = s.expected();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel("headers_routing_matches_model").await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        let mut args = FieldTable::default();
+        if let Some(m) = s.exchange_x_match {
+            args.insert(
+                ShortString::from("x-match"),
+                AMQPValue::LongString(m.as_str().into()),
+            );
+        }
+        channel
+            .exchange_declare(
+                &s.exchange,
+                ExchangeKind::Headers,
+                ExchangeDeclareOptions::default(),
+                args,
+            )
+            .await
+            .expect("Failed to declare headers exchange");
+        for q in &s.queues {
+            declare_queue_for_routing(&channel, q, FieldTable::default()).await;
+        }
+        for b in &s.bindings {
+            channel
+                .queue_bind(
+                    &s.queues[b.queue],
+                    &s.exchange,
+                    "",
+                    QueueBindOptions::default(),
+                    b.arguments(),
+                )
+                .await
+                .expect("Failed to bind");
+        }
+
+        for (i, m) in s.messages.iter().enumerate() {
+            let mut props = BasicProperties::default();
+            if let Some(h) = m.headers_table() {
+                props = props.with_headers(h);
+            }
+            channel
+                .basic_publish(
+                    &s.exchange,
+                    "",
+                    BasicPublishOptions::default(),
+                    i.to_string().as_bytes(),
+                    props,
+                )
+                .await
+                .expect("Failed to publish")
+                .await
+                .expect("Failed to confirm publish");
+        }
+
+        let mut actual = vec![BTreeSet::new(); s.messages.len()];
+        for (qi, q) in s.queues.iter().enumerate() {
+            while let Some(msg) = channel
+                .basic_get(q, BasicGetOptions { no_ack: true })
+                .await
+                .expect("Failed to basic_get")
+            {
+                let i: usize = String::from_utf8(msg.delivery.data)
+                    .unwrap()
+                    .parse()
+                    .unwrap();
+                actual[i].insert(qi);
+            }
+        }
+
+        for q in &s.queues {
+            let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
+        }
+        let _ = channel
+            .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
+            .await;
+        actual == expected
+    })
+}
