@@ -51,7 +51,7 @@ impl IntWidth {
     }
 
     /// Encodes `v` in this width. Caller must ensure `self.fits(v)`.
-    fn encode(&self, v: i64) -> AMQPValue {
+    pub fn encode(&self, v: i64) -> AMQPValue {
         match self {
             IntWidth::I8 => AMQPValue::ShortShortInt(v as i8),
             IntWidth::U8 => AMQPValue::ShortShortUInt(v as u8),

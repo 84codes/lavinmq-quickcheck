@@ -8,6 +8,7 @@ pub mod alternate;
 pub mod arguments;
 pub mod combined;
 pub mod consistent_hash;
+pub mod consumer_priority;
 pub mod delayed;
 pub mod names;
 pub mod properties;
