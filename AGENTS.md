@@ -23,6 +23,10 @@ cargo fmt
 cargo clippy
 ```
 
+## Release / CI binary
+
+`.github/workflows/release.yml` builds the test suite as one static musl executable (`cargo test --release --no-run --target x86_64-unknown-linux-musl`). It smoke-tests the binary against a LavinMQ container and, on `v*` tags, publishes it to a GitHub Release. `docs/lavinmq-ci.md` has example jobs for running it in LavinMQ's CI. To build locally you need a musl C compiler for `ring` (`musl-gcc` from `musl-tools`).
+
 ## External Dependencies (Runtime)
 
 Tests require a **LavinMQ server** running on `amqp://localhost:5672` with default credentials (`guest:guest`), and its management HTTP API on `http://localhost:15672` (used by the policy tests). Without it, `cargo test` will fail with connection errors. You can start one with:

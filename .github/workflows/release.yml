@@ -1,0 +1,79 @@
+name: Release test binary
+
+# Builds the whole test suite as one static (musl) executable, smoke-tests
+# it against LavinMQ, and on `v*` tags attaches it to a GitHub Release so
+# other CI (e.g. LavinMQ's) can download and run it without Rust.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TARGET: x86_64-unknown-linux-musl
+  # ring compiles C code; point cc-rs at the musl wrapper from musl-tools.
+  CC_x86_64_unknown_linux_musl: musl-gcc
+  BIN: amqp-quickcheck-tests-x86_64-linux
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    services:
+      lavinmq:
+        image: cloudamqp/lavinmq:latest
+        ports:
+          - 5672:5672
+          - 15672:15672
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install musl-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+
+      - name: Build test binary
+        run: |
+          exes=$(cargo test --release --no-run --locked --target "$TARGET" --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .executable != null) | .executable')
+          if [ "$(printf '%s\n' "$exes" | wc -l)" -ne 1 ]; then
+            echo "expected exactly one test executable, got:"; printf '%s\n' "$exes"; exit 1
+          fi
+          cp "$exes" "$BIN"
+          strip "$BIN"
+          file "$BIN" | grep -Eq 'static-pie linked|statically linked'
+          sha256sum "$BIN" > "$BIN.sha256"
+
+      - name: Wait for LavinMQ
+        run: |
+          for _ in $(seq 60); do
+            curl -sf -u guest:guest http://localhost:15672/api/overview >/dev/null && exit 0
+            sleep 1
+          done
+          exit 1
+
+      - name: Smoke test
+        # Few cases per property: this checks the binary, not LavinMQ.
+        env:
+          QUICKCHECK_TESTS: "10"
+        run: ./"$BIN" --skip odd_x_delay_delivers_immediately
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BIN }}
+          path: |
+            ${{ env.BIN }}
+            ${{ env.BIN }}.sha256
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "$BIN" "$BIN.sha256" --title "$GITHUB_REF_NAME" --generate-notes
