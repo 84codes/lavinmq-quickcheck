@@ -25,10 +25,10 @@ cargo clippy
 
 ## External Dependencies (Runtime)
 
-Tests require a **LavinMQ server** running on `amqp://localhost:5672` with default credentials. Without it, `cargo test` will fail with connection errors. You can start one with:
+Tests require a **LavinMQ server** running on `amqp://localhost:5672` with default credentials (`guest:guest`), and its management HTTP API on `http://localhost:15672` (used by the policy tests). Without it, `cargo test` will fail with connection errors. You can start one with:
 
 ```sh
-docker run -d --rm -p 5672:5672 cloudamqp/lavinmq
+docker run -d --rm -p 5672:5672 -p 15672:15672 cloudamqp/lavinmq
 ```
 
 ## Project Structure
@@ -37,13 +37,14 @@ docker run -d --rm -p 5672:5672 cloudamqp/lavinmq
 src/
   lib.rs        — Library root. Re-exports the public API.
   names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey.
+  alternate.rs  — Arbitrary AE edge cases: AE cycles, AE naming a missing exchange, AE argument vs policy.
   arguments.rs  — Arbitrary impls for individual x-* queue arguments.
   combined.rs   — Arbitrary impls for combined argument sets per queue type.
   consistent_hash.rs — Arbitrary x-consistent-hash scenarios: ring/jump, x-hash-on, weighted bind/unbind ops (weight ≤ 100), keys.
   properties.rs — Arbitrary newtypes for BasicProperties fields (each with apply_to), plus BasicPropertiesArgs.
   stream_offset.rs — Arbitrary x-stream-offset (first/next/int in every AMQP int width/timestamp extremes) + expected-delivery model.
   delayed.rs    — Arbitrary delayed-exchange scenarios (both declare styles), odd x-delay values, over-long exchange names.
-  routing.rs    — Arbitrary Topology: fanout exchanges, queues with optional DLX, bindings; guaranteed acyclic.
+  routing.rs    — Arbitrary Topology: fanout exchanges with optional alternate exchange, queues with optional DLX, bindings in shuffled order; guaranteed acyclic. simulate() models LavinMQ's order-dependent AE semantics.
   tests.rs      — #[cfg(test)] integration tests against a real broker.
 Cargo.toml      — Package manifest (edition 2024).
 ```
@@ -59,6 +60,7 @@ This is a library crate (`lib.rs` is the root — no binary target).
 | `lapin`            | Async AMQP client (`BasicProperties` types; tests) | Runtime dep |
 | `tokio`            | Async runtime (multi-thread + macros)        | Dev only       |
 | `futures-lite`     | `StreamExt` for consuming AMQP messages      | Dev only       |
+| `ureq`             | Sync HTTP client for the management API (policies) | Dev only |
 
 ## Code Patterns
 
