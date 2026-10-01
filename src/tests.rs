@@ -1322,3 +1322,71 @@ fn consistent_hash_survives_policy_change(algorithm: HashAlgorithm) -> bool {
         before.is_none() && after.is_none()
     })
 }
+
+// ---------------------------------------------------------------------------
+// Consumer x-priority validation
+// ---------------------------------------------------------------------------
+
+use crate::consumer_priority::{InvalidPriority, ValidPriority};
+
+/// Starts a consumer with `x-priority = value` on a fresh channel, then
+/// checks that a new channel on the same connection still works. Returns
+/// the consume result and whether the connection survived.
+async fn consume_with_priority(test: &str, value: AMQPValue) -> (Result<(), String>, bool) {
+    let conn = connect(test).await;
+    let channel = conn
+        .create_channel()
+        .await
+        .expect("Failed to create channel");
+    let queue = format!("qc_prio_{}", next_id());
+    declare_queue_for_routing(&channel, &queue, FieldTable::default()).await;
+    let mut args = FieldTable::default();
+    args.insert(ShortString::from("x-priority"), value);
+    let consumed = channel
+        .basic_consume(
+            &queue,
+            "prio-consumer",
+            BasicConsumeOptions::default(),
+            args,
+        )
+        .await
+        .map(|_| ())
+        .map_err(|e| format!("{e:?}"));
+    let alive = match conn.create_channel().await {
+        Ok(probe) => probe
+            .queue_delete(&queue, QueueDeleteOptions::default())
+            .await
+            .is_ok(),
+        Err(_) => false,
+    };
+    (consumed, alive)
+}
+
+/// Unique within this run; each test fn has its own vhost anyway.
+fn next_id() -> u64 {
+    use std::sync::atomic::AtomicU64;
+    static N: AtomicU64 = AtomicU64::new(0);
+    N.fetch_add(1, Ordering::Relaxed)
+}
+
+#[quickcheck]
+fn valid_x_priority_is_accepted(p: ValidPriority) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (consumed, alive) = consume_with_priority("valid_x_priority_is_accepted", p.0).await;
+        consumed.is_ok() && alive
+    })
+}
+
+#[quickcheck]
+fn invalid_x_priority_is_rejected(p: InvalidPriority) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let (consumed, alive) = consume_with_priority("invalid_x_priority_is_rejected", p.0).await;
+        let is_406 = consumed
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.contains("406") || e.contains("PRECONDITION_FAILED"));
+        is_406 && alive
+    })
+}
