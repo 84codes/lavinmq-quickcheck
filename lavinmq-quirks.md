@@ -262,5 +262,7 @@ on each point below.
    including RabbitMQ 3.10+'s `all-with-x` / `any-with-x`, fails with 406.
    Covered by `invalid_x_match_rejected_on_declare` / `_on_bind`.
 
+**Upstream:** point 1 is [cloudamqp/lavinmq#2301](https://github.com/cloudamqp/lavinmq/issues/2301), point 2 is [cloudamqp/lavinmq#2302](https://github.com/cloudamqp/lavinmq/issues/2302).
+
 **Generator note:** the value alphabet leaves out `ShortString`, because
 lapin tags it `s` and LavinMQ decodes `s` as a 16-bit integer.
