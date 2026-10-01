@@ -233,3 +233,34 @@ happens. `consistent_hash_survives_policy_change` reproduces the bug on
 purpose and is `#[ignore]`d until it's fixed.
 
 **Upstream:** [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300)
+
+## 8. Headers exchange matching
+
+Observed on LavinMQ 2.10.0 and modelled by `matches` in `src/headers.rs`.
+The property `headers_routing_matches_model` checks the model against the
+broker, and mutation checks confirmed that LavinMQ really behaves this way
+on each point below.
+
+1. **Header-less messages match only bindings with completely empty
+   arguments.** A message with no or empty headers matches a binding iff
+   the binding's argument table is empty. An `x-match` entry counts, so a
+   binding of just `{x-match: all}` *doesn't* match a header-less message,
+   but *does* match every message that has at least one header (`all`
+   over zero pairs). The same binding gives opposite answers depending on
+   whether unrelated headers are present.
+2. **Exchange-level `x-match` default.** A binding without `x-match`
+   uses the exchange's own `x-match` argument (default `all`). Combined
+   with point 1: on an exchange declared with `x-match: any`, a binding
+   with empty arguments matches header-less messages but *no* message
+   with headers. AMQP 0-9-1 only defines `x-match` as a binding argument.
+3. **Numbers compare by value across types.** Values are compared with
+   Crystal `==` after decoding, so `LongInt(1)`, `LongLongInt(1)` and
+   `Double(1.0)` all match each other. Strings compare by bytes, and
+   booleans only match booleans.
+4. **No `all-with-x` / `any-with-x`.** Only `all` and `any` (exact,
+   lowercase) are accepted, on bind and on exchange declare. Anything else,
+   including RabbitMQ 3.10+'s `all-with-x` / `any-with-x`, fails with 406.
+   Covered by `invalid_x_match_rejected_on_declare` / `_on_bind`.
+
+**Generator note:** the value alphabet leaves out `ShortString`, because
+lapin tags it `s` and LavinMQ decodes `s` as a 16-bit integer.

@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, delayed-message exchanges, and consumer `x-priority` values.
+`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, delayed-message exchanges, consumer `x-priority` values, and headers-exchange routing.
 
 ## Commands
 
@@ -36,6 +36,7 @@ docker run -d --rm -p 5672:5672 -p 15672:15672 cloudamqp/lavinmq
 ```
 src/
   lib.rs        — Library root. Re-exports the public API.
+  headers.rs    — Arbitrary headers-exchange scenarios (exchange/binding x-match, header-less messages, cross-typed values), LavinMQ matching model, invalid x-match values.
   names.rs      — Arbitrary impls for QueueName, RoutingKey, TopicRoutingKey.
   alternate.rs  — Arbitrary AE edge cases: AE cycles, AE naming a missing exchange, AE argument vs policy.
   arguments.rs  — Arbitrary impls for individual x-* queue arguments.
