@@ -130,6 +130,14 @@ apply to consumers of stream queues.
 | `x-filter-match-type`                 | string (`all` \| `any`)                           | `all`    | Whether all filters must match or any single one. |
 | `x-stream-match-unfiltered`           | boolean                                           | `false`  | If true, messages without the filter header are still delivered. |
 
+### Consumer priority (`x-priority`)
+
+Also passed on **`basic.consume`**, for classic and priority queues.
+
+| Argument     | Type                        | Default | Description |
+| ------------ | --------------------------- | ------- | ----------- |
+| `x-priority` | integer (any width) fitting `i32` | `0` | A consumer only gets messages when every consumer with a higher priority is out of prefetch capacity. Equal priorities share. Out-of-range integers and non-integers (including an explicit void/null) → `406 PRECONDITION_FAILED`. Rejected on stream consumers. Ignored on single-active-consumer queues. See `src/lavinmq/amqp/consumer.cr` (`consumer_priority`, `wait_for_priority_consumers`). |
+
 ---
 
 ## Policy-only arguments
