@@ -11,15 +11,42 @@ use lapin::{
     types::{AMQPValue, FieldTable, ShortString},
 };
 use quickcheck_macros::quickcheck;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-async fn connect_channel() -> lapin::Channel {
-    let conn = Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
+/// Vhosts already recreated in this test run.
+static FRESH_VHOSTS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Returns the vhost `qc-<test>` that isolates one test function from the
+/// others running in parallel. Its first use in a run deletes and
+/// recreates it, so leftovers from earlier runs are gone. The cases within
+/// one test function run sequentially and share it.
+fn test_vhost(test: &str) -> String {
+    let vhost = format!("qc-{test}");
+    let mut fresh = FRESH_VHOSTS.lock().unwrap();
+    if fresh.get_or_insert_with(HashSet::new).insert(vhost.clone()) {
+        let _ = ureq::delete(format!("{MGMT}/vhosts/{vhost}"))
+            .header("Authorization", MGMT_AUTH)
+            .call();
+        ureq::put(format!("{MGMT}/vhosts/{vhost}"))
+            .header("Authorization", MGMT_AUTH)
+            .send_empty()
+            .expect("Failed to create test vhost");
+    }
+    vhost
+}
+
+async fn connect(test: &str) -> Connection {
+    let uri = format!("amqp://localhost:5672/{}", test_vhost(test));
+    Connection::connect(&uri, ConnectionProperties::default())
         .await
-        .expect("Failed to connect to LavinMQ");
+        .expect("Failed to connect to LavinMQ")
+}
+
+async fn connect_channel(test: &str) -> lapin::Channel {
+    let conn = connect(test).await;
     conn.create_channel()
         .await
         .expect("Failed to create channel")
@@ -99,7 +126,7 @@ async fn declare_stream_rejects(
 fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("round_trip").await;
 
         let queue_opts = QueueDeclareOptions {
             auto_delete: true,
@@ -159,7 +186,7 @@ fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
 fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("direct_exchange_round_trip").await;
 
         let queue_opts = QueueDeclareOptions {
             auto_delete: true,
@@ -231,7 +258,7 @@ fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool
 fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("topic_exchange_round_trip").await;
 
         let queue_opts = QueueDeclareOptions {
             auto_delete: true,
@@ -311,7 +338,7 @@ macro_rules! single_arg_classic_test {
         fn $fn_name(name: QueueName, arg: $ty) -> bool {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let channel = connect_channel().await;
+                let channel = connect_channel(stringify!($fn_name)).await;
                 let mut table = FieldTable::default();
                 arg.insert_into(&mut table);
                 declare_classic_ok(&channel, &name.0, table).await
@@ -341,7 +368,7 @@ single_arg_classic_test!(declare_with_deduplication_header, DeduplicationHeader)
 fn declare_with_dead_letter_routing_key(name: QueueName, arg: DeadLetterRoutingKey) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("declare_with_dead_letter_routing_key").await;
         let mut table = FieldTable::default();
         table.insert(
             lapin::types::ShortString::from("x-dead-letter-exchange"),
@@ -362,7 +389,7 @@ macro_rules! single_arg_stream_test {
         fn $fn_name(name: QueueName, arg: $ty) -> bool {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let channel = connect_channel().await;
+                let channel = connect_channel(stringify!($fn_name)).await;
                 let mut table = FieldTable::default();
                 arg.insert_into(&mut table);
                 declare_stream_ok(&channel, &name.0, table).await
@@ -379,7 +406,7 @@ use crate::combined::ClassicQueueArgs;
 fn declare_classic_with_combined_args(name: QueueName, args: ClassicQueueArgs) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("declare_classic_with_combined_args").await;
         let mut table = FieldTable::default();
         args.apply(&mut table);
         declare_classic_ok(&channel, &name.0, table).await
@@ -392,7 +419,7 @@ use crate::combined::PriorityQueueArgs;
 fn declare_priority_with_combined_args(name: QueueName, args: PriorityQueueArgs) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("declare_priority_with_combined_args").await;
         let mut table = FieldTable::default();
         args.apply(&mut table);
         declare_classic_ok(&channel, &name.0, table).await
@@ -405,7 +432,7 @@ use crate::combined::StreamQueueArgs;
 fn declare_stream_with_combined_args(name: QueueName, args: StreamQueueArgs) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("declare_stream_with_combined_args").await;
         let mut table = FieldTable::default();
         args.apply(&mut table);
         let ok = channel
@@ -425,7 +452,7 @@ macro_rules! stream_rejection_test {
         fn $fn_name(name: QueueName, arg: $ty) -> bool {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let channel = connect_channel().await;
+                let channel = connect_channel(stringify!($fn_name)).await;
                 let mut table = FieldTable::default();
                 arg.insert_into(&mut table);
                 declare_stream_rejects(&channel, &name.0, table).await
@@ -590,7 +617,7 @@ fn routing_graph_delivers_expected(topo: Topology) -> bool {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("routing_graph_delivers_expected").await;
 
         // 1. Declare exchanges.
         for ex in &topo.exchanges {
@@ -689,7 +716,7 @@ macro_rules! single_prop_publish_test {
         fn $fn_name(name: QueueName, prop: $ty) -> bool {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let channel = connect_channel().await;
+                let channel = connect_channel(stringify!($fn_name)).await;
                 let props = prop.apply_to(BasicProperties::default());
                 publish_with_props(&channel, &name.0, props).await
             })
@@ -715,7 +742,7 @@ single_prop_publish_test!(publish_with_headers, Headers);
 fn publish_with_combined_properties(name: QueueName, args: BasicPropertiesArgs) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("publish_with_combined_properties").await;
         publish_with_props(&channel, &name.0, args.apply()).await
     })
 }
@@ -724,7 +751,7 @@ fn publish_with_combined_properties(name: QueueName, args: BasicPropertiesArgs) 
 // Consistent-hash exchange tests
 // ---------------------------------------------------------------------------
 
-use crate::consistent_hash::{BindOp, ConsistentHashScenario};
+use crate::consistent_hash::{BindOp, ConsistentHashScenario, HashAlgorithm};
 use lapin::options::{BasicGetOptions, ConfirmSelectOptions};
 
 async fn setup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScenario) {
@@ -796,7 +823,7 @@ async fn cleanup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashSce
 fn consistent_hash_is_deterministic(s: ConsistentHashScenario) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("consistent_hash_is_deterministic").await;
         channel
             .confirm_select(ConfirmSelectOptions::default())
             .await
@@ -883,7 +910,7 @@ fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("stream_offset_delivers_expected").await;
         channel
             .confirm_select(ConfirmSelectOptions::default())
             .await
@@ -947,7 +974,7 @@ use crate::delayed::{DelayedScenario, LongExchangeName, declare_args};
 fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("odd_x_delay_delivers_immediately").await;
         let (kind, args) = declare_args(s.style, s.ty);
         channel
             .exchange_declare(&s.exchange, kind, ExchangeDeclareOptions::default(), args)
@@ -1013,9 +1040,7 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
 fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let conn = Connection::connect("amqp://localhost:5672", ConnectionProperties::default())
-            .await
-            .expect("Failed to connect to LavinMQ");
+        let conn = connect("delayed_exchange_long_name_is_clean_error").await;
         let channel = conn
             .create_channel()
             .await
@@ -1092,7 +1117,7 @@ async fn declare_with_ae(channel: &lapin::Channel, name: &str, ae: &str, key: &s
 fn ae_cycle_terminates_and_returns(c: AeCycle) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("ae_cycle_terminates_and_returns").await;
         channel
             .confirm_select(ConfirmSelectOptions::default())
             .await
@@ -1120,7 +1145,7 @@ fn ae_cycle_terminates_and_returns(c: AeCycle) -> bool {
 fn missing_ae_returns_mandatory(m: MissingAe) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("missing_ae_returns_mandatory").await;
         channel
             .confirm_select(ConfirmSelectOptions::default())
             .await
@@ -1140,28 +1165,28 @@ const MGMT: &str = "http://localhost:15672/api";
 /// `guest:guest`, base64.
 const MGMT_AUTH: &str = "Basic Z3Vlc3Q6Z3Vlc3Q=";
 
-fn put_ae_policy(name: &str, exchange: &str, ae: &str) {
+fn put_ae_policy(vhost: &str, name: &str, exchange: &str, ae: &str) {
     let body = format!(
         r#"{{"pattern":"^{exchange}$","apply-to":"exchanges","priority":10,"definition":{{"alternate-exchange":"{ae}"}}}}"#
     );
-    ureq::put(format!("{MGMT}/policies/%2f/{name}"))
+    ureq::put(format!("{MGMT}/policies/{vhost}/{name}"))
         .header("Authorization", MGMT_AUTH)
         .header("Content-Type", "application/json")
         .send(body)
         .expect("Failed to create policy");
 }
 
-fn delete_policy(name: &str) {
-    let _ = ureq::delete(format!("{MGMT}/policies/%2f/{name}"))
+fn delete_policy(vhost: &str, name: &str) {
+    let _ = ureq::delete(format!("{MGMT}/policies/{vhost}/{name}"))
         .header("Authorization", MGMT_AUTH)
         .call();
 }
 
 /// Polls until LavinMQ reports `policy` as applied to `exchange`.
-async fn wait_for_policy(exchange: &str, policy: &str) -> bool {
+async fn wait_for_policy(vhost: &str, exchange: &str, policy: &str) -> bool {
     let needle = format!(r#""policy":"{policy}""#);
     for _ in 0..200 {
-        let applied = ureq::get(format!("{MGMT}/exchanges/%2f/{exchange}"))
+        let applied = ureq::get(format!("{MGMT}/exchanges/{vhost}/{exchange}"))
             .header("Authorization", MGMT_AUTH)
             .call()
             .ok()
@@ -1192,7 +1217,7 @@ async fn queue_len(channel: &lapin::Channel, queue: &str) -> usize {
 fn ae_argument_beats_policy(p: PolicyAe) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
-        let channel = connect_channel().await;
+        let channel = connect_channel("ae_argument_beats_policy").await;
         channel
             .confirm_select(ConfirmSelectOptions::default())
             .await
@@ -1215,8 +1240,9 @@ fn ae_argument_beats_policy(p: PolicyAe) -> bool {
             Some(sp) => declare_with_ae(&channel, &p.exchange, &p.arg_ae, sp.key()).await,
             None => declare_fanout(&channel, &p.exchange, FieldTable::default()).await,
         }
-        put_ae_policy(&p.policy, &p.exchange, &p.policy_ae);
-        let applied = wait_for_policy(&p.exchange, &p.policy).await;
+        let vhost = test_vhost("ae_argument_beats_policy");
+        put_ae_policy(&vhost, &p.policy, &p.exchange, &p.policy_ae);
+        let applied = wait_for_policy(&vhost, &p.exchange, &p.policy).await;
 
         publish_probe(&channel, &p.exchange).await;
         let got = (
@@ -1224,7 +1250,7 @@ fn ae_argument_beats_policy(p: PolicyAe) -> bool {
             queue_len(&channel, &p.arg_queue).await,
         );
 
-        delete_policy(&p.policy);
+        delete_policy(&vhost, &p.policy);
         for q in [&p.policy_queue, &p.arg_queue] {
             let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
         }
@@ -1239,5 +1265,60 @@ fn ae_argument_beats_policy(p: PolicyAe) -> bool {
             (1, 0)
         };
         applied && got == expected
+    })
+}
+
+/// Desired: re-applying policies leaves a consistent-hash exchange's
+/// routing intact. Ignored: with `x-algorithm` set, LavinMQ replaces the
+/// hasher and routing breaks (see `lavinmq-quirks.md` #7).
+#[quickcheck]
+#[ignore = "consistent-hash loses routing on policy change; cloudamqp/lavinmq#2300"]
+fn consistent_hash_survives_policy_change(algorithm: HashAlgorithm) -> bool {
+    let test = "consistent_hash_survives_policy_change";
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel(test).await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        let mut args = FieldTable::default();
+        algorithm.insert_into(&mut args);
+        channel
+            .exchange_declare(
+                "qc_ch_policy",
+                ExchangeKind::Custom("x-consistent-hash".into()),
+                ExchangeDeclareOptions::default(),
+                args,
+            )
+            .await
+            .expect("Failed to declare consistent-hash exchange");
+        declare_queue_for_routing(&channel, "qc_ch_policy_q", FieldTable::default()).await;
+        channel
+            .queue_bind(
+                "qc_ch_policy_q",
+                "qc_ch_policy",
+                "10",
+                QueueBindOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .expect("Failed to bind");
+
+        let before = publish_mandatory(&channel, "qc_ch_policy").await;
+        let vhost = test_vhost(test);
+        put_ae_policy(&vhost, "qc_unrelated", "qc_matches_nothing", "x");
+        // Policy application is asynchronous; there's no resource to poll.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let after = publish_mandatory(&channel, "qc_ch_policy").await;
+
+        delete_policy(&vhost, "qc_unrelated");
+        let _ = channel
+            .queue_delete("qc_ch_policy_q", QueueDeleteOptions::default())
+            .await;
+        let _ = channel
+            .exchange_delete("qc_ch_policy", ExchangeDeleteOptions::default())
+            .await;
+        before.is_none() && after.is_none()
     })
 }

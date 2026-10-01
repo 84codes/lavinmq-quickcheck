@@ -228,5 +228,8 @@ still lists the bindings.
 (`ae_argument_beats_policy`) breaks `consistent_hash_is_deterministic`
 if the two run at the same time against the same vhost. The failures
 look like "the first copies were delivered, everything after vanished".
+Each test function now runs in its own vhost, so that no longer
+happens. `consistent_hash_survives_policy_change` reproduces the bug on
+purpose and is `#[ignore]`d until it's fixed.
 
 **Upstream:** [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300)

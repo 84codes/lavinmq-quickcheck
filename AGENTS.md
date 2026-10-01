@@ -87,6 +87,7 @@ Tests are **integration-style property-based tests** in `src/tests.rs` (declared
 - Spin up a `tokio::runtime::Runtime` manually inside each test (since `#[quickcheck]` doesn't support `async fn`).
 - Perform a full AMQP round-trip: declare queue → publish → consume → verify → delete queue.
 - Use `auto_delete: true` on queues for cleanup safety.
+- Run in a **per-test-function vhost** `qc-<fn name>`: `connect_channel("<fn name>")` / `test_vhost(..)` delete and recreate it on first use in a run. Tests run in parallel against one broker, and vhosts keep their names, policies and policy side effects (e.g. `lavinmq-quirks.md` #7) from leaking between tests. The `qc-*` vhosts stay on the broker after a run.
 
 ### Async in Sync Tests
 
@@ -105,4 +106,4 @@ Because `#[quickcheck]` requires synchronous functions returning `bool`, each te
 3. **Retry loop in `Arbitrary`** — `QueueName::arbitrary` uses a `loop` to reject reserved prefixes. This is safe because the probability of generating `amq.` prefix is vanishingly small, but it's technically unbounded.
 4. **No `shrink` implementation** — The `Arbitrary` impl only defines `arbitrary`, not `shrink`. QuickCheck will use default shrinking on the inner `String`, which may produce invalid names during shrink. If shrink-generated names cause test failures unrelated to the property, consider implementing `shrink` with domain constraints.
 5. **Ignored tests document LavinMQ bugs** — `#[ignore]`d tests assert the *desired* broker behaviour for known bugs (see `lavinmq-quirks.md`). Run them with `cargo test -- --ignored`; one passing means the bug is fixed and the `#[ignore]` can go.
-6. **Known flake, not yet investigated: `odd_x_delay_delivers_immediately`** — It sometimes fails in the full parallel suite, even with policy tests skipped, but has never failed when run alone. Policy churn doesn't affect the delayed exchange (0/30 lost in a stress check). One suspect is the 2 s arrival timeout under load. Parked on 2026-10-01 until the suite runs green again.
+6. **Known flake, not yet investigated: `odd_x_delay_delivers_immediately`** — It sometimes fails in the full parallel suite, even with policy tests skipped, but has never failed when run alone. Policy churn doesn't affect the delayed exchange (0/30 lost in a stress check). One suspect is the 2 s arrival timeout under load. Still fails (3/5 full runs) with per-test vhosts, so it isn't cross-test name or policy interference. Parked on 2026-10-01.
