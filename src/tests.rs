@@ -1483,3 +1483,91 @@ fn headers_routing_matches_model(s: HeadersScenario) -> bool {
         actual == expected
     })
 }
+
+use crate::headers::InvalidXMatch;
+
+/// Runs `op` on a fresh channel and reports whether it failed with 406
+/// while the connection stayed usable.
+async fn rejected_406_conn_alive<F, Fut>(test: &str, op: F) -> bool
+where
+    F: FnOnce(lapin::Channel) -> Fut,
+    Fut: std::future::Future<Output = Result<(), lapin::Error>>,
+{
+    let conn = connect(test).await;
+    let channel = conn
+        .create_channel()
+        .await
+        .expect("Failed to create channel");
+    let is_406 = op(channel).await.err().is_some_and(|e| {
+        let msg = format!("{e:?}");
+        msg.contains("406") || msg.contains("PRECONDITION_FAILED")
+    });
+    is_406 && conn.create_channel().await.is_ok()
+}
+
+fn x_match_table(v: AMQPValue) -> FieldTable {
+    let mut t = FieldTable::default();
+    t.insert(ShortString::from("x-match"), v);
+    t
+}
+
+#[quickcheck]
+fn invalid_x_match_rejected_on_declare(x: InvalidXMatch) -> bool {
+    let test = "invalid_x_match_rejected_on_declare";
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(rejected_406_conn_alive(test, |ch| async move {
+        let name = format!("qc_hx_bad_{}", next_id());
+        let res = ch
+            .exchange_declare(
+                &name,
+                ExchangeKind::Headers,
+                ExchangeDeclareOptions::default(),
+                x_match_table(x.0),
+            )
+            .await;
+        if res.is_ok() {
+            let _ = ch
+                .exchange_delete(&name, ExchangeDeleteOptions::default())
+                .await;
+        }
+        res
+    }))
+}
+
+#[quickcheck]
+fn invalid_x_match_rejected_on_bind(x: InvalidXMatch) -> bool {
+    let test = "invalid_x_match_rejected_on_bind";
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let setup = connect_channel(test).await;
+        let id = next_id();
+        let (ex, q) = (format!("qc_hx_{id}"), format!("qc_hq_{id}"));
+        setup
+            .exchange_declare(
+                &ex,
+                ExchangeKind::Headers,
+                ExchangeDeclareOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .expect("Failed to declare headers exchange");
+        declare_queue_for_routing(&setup, &q, FieldTable::default()).await;
+        let (ex2, q2) = (ex.clone(), q.clone());
+        let ok = rejected_406_conn_alive(test, |ch| async move {
+            ch.queue_bind(
+                &q2,
+                &ex2,
+                "",
+                QueueBindOptions::default(),
+                x_match_table(x.0),
+            )
+            .await
+        })
+        .await;
+        let _ = setup.queue_delete(&q, QueueDeleteOptions::default()).await;
+        let _ = setup
+            .exchange_delete(&ex, ExchangeDeleteOptions::default())
+            .await;
+        ok
+    })
+}
