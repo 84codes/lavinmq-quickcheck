@@ -10,6 +10,7 @@ pub mod combined;
 pub mod consistent_hash;
 pub mod consumer_priority;
 pub mod delayed;
+pub mod headers;
 pub mod names;
 pub mod properties;
 pub mod routing;
