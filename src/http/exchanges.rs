@@ -5,7 +5,7 @@ use crate::QueueName;
 use crate::consistent_hash::{HashAlgorithm, HashOn};
 use crate::delayed::{DeclareStyle, DelayedType, declare_args};
 use crate::headers::{InvalidXMatch, MatchMode};
-use crate::http::harness::declare_parity;
+use crate::http::harness::{MAX_DECLS, declare_parity};
 use crate::http::json::to_json;
 use lapin::{
     ExchangeKind,
@@ -89,38 +89,67 @@ impl Arbitrary for ExchangeDecl {
     }
 }
 
+async fn declare(ch: &lapin::Channel, name: &str, d: &ExchangeDecl) -> lapin::Result<()> {
+    let opts = ExchangeDeclareOptions {
+        durable: d.durable,
+        auto_delete: d.auto_delete,
+        internal: d.internal,
+        ..ExchangeDeclareOptions::default()
+    };
+    ch.exchange_declare(
+        name,
+        ExchangeKind::Custom(d.kind.clone()),
+        opts,
+        d.arguments.clone(),
+    )
+    .await
+}
+
+fn body(d: &ExchangeDecl) -> Option<serde_json::Value> {
+    Some(json!({
+        "type": d.kind,
+        "durable": d.durable,
+        "auto_delete": d.auto_delete,
+        "internal": d.internal,
+        "arguments": to_json(&d.arguments)?,
+    }))
+}
+
 /// Declaring the same exchange (once, or redeclared with other settings)
 /// over AMQP and over HTTP gives equivalent outcomes and the same exchange.
+/// Redeclaring an internal exchange is left to `internal_exchange_redeclare`
+/// (quirk #23).
 #[quickcheck]
 fn exchange_declare_parity(name: QueueName, decls: Vec<ExchangeDecl>) -> TestResult {
+    if decls.iter().take(MAX_DECLS).filter(|d| d.internal).count() > 1 {
+        return TestResult::discard();
+    }
     declare_parity(
         "exchange_declare_parity",
         "exchanges",
         &name.0,
         &decls,
-        async |ch, d: &ExchangeDecl| {
-            let opts = ExchangeDeclareOptions {
-                durable: d.durable,
-                auto_delete: d.auto_delete,
-                internal: d.internal,
-                ..ExchangeDeclareOptions::default()
-            };
-            ch.exchange_declare(
-                &name.0,
-                ExchangeKind::Custom(d.kind.clone()),
-                opts,
-                d.arguments.clone(),
-            )
-            .await
-        },
-        |d| {
-            Some(json!({
-                "type": d.kind,
-                "durable": d.durable,
-                "auto_delete": d.auto_delete,
-                "internal": d.internal,
-                "arguments": to_json(&d.arguments)?,
-            }))
-        },
+        async |ch, d| declare(ch, &name.0, d).await,
+        body,
+    )
+}
+
+/// Known bug (`lavinmq-quirks.md` #23): re-PUTting an existing internal
+/// exchange, with identical settings, answers 400 "Not allowed to publish
+/// to internal exchange". AMQP redeclares it fine.
+#[quickcheck]
+#[ignore]
+fn internal_exchange_redeclare(name: QueueName, decl: ExchangeDecl) -> TestResult {
+    let decl = ExchangeDecl {
+        internal: true,
+        ..decl
+    };
+    declare_parity(
+        "internal_exchange_redeclare",
+        "exchanges",
+        &name.0,
+        &[decl.clone(), decl],
+        async |ch, d| declare(ch, &name.0, d).await,
+        body,
     )
 }

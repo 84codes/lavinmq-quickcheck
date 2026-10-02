@@ -62,7 +62,7 @@ src/
     queues.rs   — queue.declare vs PUT /queues parity (+ ignored amq. prefix quirk #9).
     validation.rs — HTTP-only input validation (no AMQP side: lapin can't send >255-byte short strings): name/routing-key/property/header-key lengths via LongName, delayed names past the internal-queue limit, wrong JSON types; ignored quirks #5, #15–#17.
     bindings.rs — bind/unbind parity (queue + exchange destinations, missing dest, headers args) + ignored properties_key quirk #10.
-    exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE).
+    exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE) + ignored internal-redeclare quirk #23.
   mqtt/         — MQTT 3.1.1. Generators + models are public; client.rs, raw.rs, tests.rs are #[cfg(test)].
     topic.rs    — TopicName, Subscription (filter derived from a topic, ~50% match), InvalidTopicName/Filter; matches() (spec) vs lavinmq_matches() (quirk #18).
     qos.rs      — Qos 0–2; granted() (max 1), delivered() (spec min) vs lavinmq_delivered() (quirk #20).

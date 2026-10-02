@@ -8,7 +8,7 @@ use serde_json::Value;
 use std::fmt::Debug;
 
 /// Declarations per case: enough to cover redeclares.
-const MAX_DECLS: usize = 3;
+pub const MAX_DECLS: usize = 3;
 
 /// Declares `name` once per entry of `decls` over AMQP (vhost
 /// `qc-<test>-amqp`) and over HTTP (`PUT /<resource>/qc-<test>-http/<name>`).

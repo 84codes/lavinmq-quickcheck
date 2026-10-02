@@ -504,3 +504,22 @@ so `a.` is two words on both sides.
 which can end in `.`. On a topic-typed delayed exchange such a message was
 released immediately and then dropped as unroutable. The generator now
 never gives a topic scenario a trailing `.`.
+
+## 23. HTTP redeclare of an internal exchange is rejected
+
+**Observed:** `PUT /api/exchanges/{vhost}/{name}` on an existing internal
+exchange, with identical settings, answers 400 "Not allowed to publish to
+internal exchange". Any exchange type. Over AMQP the same redeclare is a
+plain `declare-ok`. Reproduced on LavinMQ 2.10.0.
+
+**Why:** the PUT handler checks `e.internal?` after matching the existing
+exchange. That check looks copied from the `/publish` handler, and
+nothing is published here.
+
+**Expected:** 204, as for a non-internal exchange.
+
+**Upstream:** [cloudamqp/lavinmq#2319](https://github.com/cloudamqp/lavinmq/issues/2319).
+
+**How this crate covers it:** `internal_exchange_redeclare` (in
+`src/http/exchanges.rs`) is `#[ignore]`d. `exchange_declare_parity`
+discards cases with more than one internal declaration.

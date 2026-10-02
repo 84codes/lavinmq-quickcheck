@@ -78,6 +78,7 @@ still open. They fail until the bug is fixed:
 | `mqtt_qos2_publish_gets_pubrec` | [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314) |
 | `mqtt_qos0_publish_is_delivered_at_qos0` | [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315) |
 | `mqtt_retained_non_ascii_topics` | [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316) |
+| `internal_exchange_redeclare` | [cloudamqp/lavinmq#2319](https://github.com/cloudamqp/lavinmq/issues/2319) |
 
 Two headers-exchange inconsistencies are filed as
 [#2301](https://github.com/cloudamqp/lavinmq/issues/2301) and
