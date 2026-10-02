@@ -63,7 +63,11 @@ impl Arbitrary for MessageTtl {
     }
 }
 
-/// `x-expires` — queue-level idle TTL in milliseconds (must be ≥ 1).
+/// Shortest generated `x-expires`. The spec allows 1 ms, but a queue
+/// that expires mid-test races the test's own checks.
+pub const MIN_EXPIRES: u32 = 60_000;
+
+/// `x-expires` — queue-level idle TTL in milliseconds (≥ `MIN_EXPIRES`).
 #[derive(Clone, Debug)]
 pub struct Expires(pub u32);
 
@@ -78,9 +82,7 @@ impl Expires {
 
 impl Arbitrary for Expires {
     fn arbitrary(g: &mut Gen) -> Self {
-        // Spec requires >= 1.
-        let v = u32::arbitrary(g).saturating_add(1);
-        Expires(v)
+        Expires(u32::arbitrary(g).max(MIN_EXPIRES))
     }
 }
 
@@ -361,5 +363,16 @@ impl Arbitrary for MaxAge {
         let n = *g.choose(&(1u32..=999).collect::<Vec<_>>()).unwrap();
         let unit = *g.choose(MAX_AGE_UNITS).unwrap();
         MaxAge(format!("{}{}", n, unit))
+    }
+}
+
+#[cfg(test)]
+mod generator_tests {
+    use super::*;
+    use quickcheck_macros::quickcheck;
+
+    #[quickcheck]
+    fn expires_outlives_a_test(e: Expires) -> bool {
+        e.0 >= MIN_EXPIRES
     }
 }
