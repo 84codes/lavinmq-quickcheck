@@ -11,6 +11,7 @@ pub mod consistent_hash;
 pub mod consumer_priority;
 pub mod delayed;
 pub mod headers;
+pub mod mqtt;
 pub mod names;
 pub mod properties;
 pub mod routing;
@@ -18,5 +19,7 @@ pub mod stream_offset;
 
 pub use names::{QueueName, RoutingKey, TopicRoutingKey};
 
+#[cfg(test)]
+mod http;
 #[cfg(test)]
 mod tests;

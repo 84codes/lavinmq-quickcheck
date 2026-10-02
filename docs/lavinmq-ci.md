@@ -1,10 +1,11 @@
 # Running the suite in LavinMQ's CI
 
 Each `v*` tag of this repo publishes a static (musl) executable that holds
-the whole test suite: `amqp-quickcheck-tests-x86_64-linux`, plus a
+the whole test suite: `lavinmq-quickcheck-tests-x86_64-linux`, plus a
 `.sha256`. It needs no Rust toolchain or system libraries, only a LavinMQ
-on `localhost:5672` with the management API on `localhost:15672` and
-`guest:guest`.
+on `localhost:5672` (AMQP) and `localhost:1883` (MQTT), with the management
+API on `localhost:15672` and `guest:guest`. `--bind=::` below covers all
+three listeners.
 
 ## Example jobs
 
@@ -13,13 +14,13 @@ artifact. Replace `OWNER` with this repo's GitHub owner, and pin `QC_VERSION`
 so a new test release can't turn LavinMQ's CI red on its own.
 
 ```yaml
-  amqp-quickcheck:
-    name: amqp-quickcheck property tests
+  lavinmq-quickcheck:
+    name: lavinmq-quickcheck property tests
     runs-on: ubuntu-24.04
     needs: compile
     env:
       QC_VERSION: v0.1.0
-      QC_BIN: amqp-quickcheck-tests-x86_64-linux
+      QC_BIN: lavinmq-quickcheck-tests-x86_64-linux
     steps:
       - name: Install LavinMQ dependencies
         run: |
@@ -36,11 +37,11 @@ so a new test release can't turn LavinMQ's CI red on its own.
           chmod +x bin/*
           bin/lavinmq --data-dir=/tmp/amqp --bind=:: &
 
-      - name: Download amqp-quickcheck
+      - name: Download lavinmq-quickcheck
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release download "$QC_VERSION" -R OWNER/amqp-quickcheck -p "$QC_BIN*"
+          gh release download "$QC_VERSION" -R OWNER/lavinmq-quickcheck -p "$QC_BIN*"
           sha256sum -c "$QC_BIN.sha256"
           chmod +x "$QC_BIN"
 
@@ -53,11 +54,10 @@ so a new test release can't turn LavinMQ's CI red on its own.
           exit 1
 
       - name: Run property tests
-        # Known flaky under parallel load; see AGENTS.md (Gotchas).
-        run: ./"$QC_BIN" --skip odd_x_delay_delivers_immediately
+        run: ./"$QC_BIN"
 
-  amqp-quickcheck-known-bugs:
-    name: amqp-quickcheck known LavinMQ bugs
+  lavinmq-quickcheck-known-bugs:
+    name: lavinmq-quickcheck known LavinMQ bugs
     runs-on: ubuntu-24.04
     needs: compile
     # These assert the *fixed* behaviour of open LavinMQ bugs. A pass means
@@ -65,7 +65,7 @@ so a new test release can't turn LavinMQ's CI red on its own.
     continue-on-error: true
     env:
       QC_VERSION: v0.1.0
-      QC_BIN: amqp-quickcheck-tests-x86_64-linux
+      QC_BIN: lavinmq-quickcheck-tests-x86_64-linux
     steps:
       # … same setup steps as above …
       - name: Run ignored bug probes

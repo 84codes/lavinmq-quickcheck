@@ -173,6 +173,13 @@ with the connection still usable.
 asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
 fixed. Run it with `cargo test -- --ignored`.
 
+**Over HTTP:** `PUT /api/exchanges/{vhost}/{name}` for the same names
+answers `500 Internal Server Error`, whichever way the exchange is made
+delayed (`x-delayed-message`, `x-delayed-exchange: true`, or the
+HTTP-only `"delayed": true` body field). Nothing is left behind.
+`delayed_long_name_is_bad_request` (in `src/http/validation.rs`) asserts
+a 400 and is `#[ignore]`d.
+
 **Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297)
 
 ## 6. Alternate exchanges fire per routing pass, not per exchange
@@ -266,3 +273,234 @@ on each point below.
 
 **Generator note:** the value alphabet leaves out `ShortString`, because
 lapin tags it `s` and LavinMQ decodes `s` as a 16-bit integer.
+
+## 9. HTTP API rejects reserved `amq.` names with 400, not 403
+
+**Observed:** Declaring a queue or exchange named `amq.*` over AMQP fails
+with 403 `ACCESS_REFUSED`. The same declaration over the HTTP API
+(`PUT /api/queues/{vhost}/{name}`, `PUT /api/exchanges/{vhost}/{name}`)
+answers `400 Bad Request` with the same reason text. Reproduced on
+LavinMQ 2.10.0.
+
+**Expected:** `403 Forbidden`, matching AMQP. The HTTP API already
+answers 403 to binding to the default exchange, which AMQP also refuses
+with 403.
+
+**How this crate covers it:** `reserved_prefix_parity` (in
+`src/http/queues.rs`) asserts the AMQP and HTTP outcomes agree and is
+`#[ignore]`d until LavinMQ is fixed.
+
+## 10. Binding `properties_key` collides for routing keys `""` and `"~"`
+
+**Observed:** The HTTP API identifies a binding by its `properties_key`:
+the routing key (or `~` if it is empty), plus `~<base64 of the
+arguments>` if it has arguments. A binding with routing key `""` and one
+with routing key `"~"` (same source, destination, no arguments) both get
+`properties_key` `"~"`. `DELETE /api/bindings/{vhost}/e/{x}/q/{q}/~`
+removes the `""` binding first. You can't target the `"~"` binding until
+it's the only one left. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** Each binding of a source/destination pair has its own
+`properties_key`, e.g. by escaping `~` in the routing key.
+
+**How this crate covers it:** `properties_keys_are_unique` (in
+`src/http/bindings.rs`) is `#[ignore]`d until LavinMQ is fixed.
+`RoutingKey` never generates `~`, so `binding_parity` doesn't hit it.
+
+## 11. `/get` and `/publish` spell `cluster_id` differently
+
+**Observed:** `POST /api/exchanges/{vhost}/{name}/publish` reads the
+`cluster_id` property from `properties.reserved`, as the OpenAPI spec says.
+`POST /api/queues/{vhost}/{name}/get` returns it as `properties.reserved1`.
+`/publish` silently ignores `reserved1`, so republishing a message read
+with `/get` drops its `cluster_id`. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** One spelling in both directions.
+
+**How this crate covers it:** `get_properties_republish_unchanged` (in
+`src/http/messages.rs`) is `#[ignore]`d. `publish_parity`/`get_parity`
+rename `reserved1` to `reserved` before comparing.
+
+## 12. Timestamps above `i64::MAX` over HTTP
+
+**Observed:** The AMQP `timestamp` property is an unsigned 64-bit integer.
+LavinMQ stores one above `i64::MAX` fine over AMQP, but `/get` renders it
+as a negative number (`u64::MAX` reads back as `-1`). `/publish` rejects
+such a timestamp with `400`. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** The unsigned value in both directions.
+
+**How this crate covers it:** `large_timestamp_round_trips` (in
+`src/http/messages.rs`) is `#[ignore]`d. `publish_parity`/`get_parity`
+discard cases with such timestamps.
+
+## 13. `/get` returns URL-safe base64
+
+**Observed:** `POST /api/queues/{vhost}/{name}/get` with
+`"encoding": "base64"` returns payloads in the URL-safe base64 alphabet
+(`-` and `_`). `/publish` with `"payload_encoding": "base64"` takes the
+standard alphabet (`+` and `/`), and a standard decoder fails on what
+`/get` returns. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** The standard alphabet (RFC 4648 §4), as `/publish` takes it.
+
+**How this crate covers it:** `get_payload_is_standard_base64` (in
+`src/http/messages.rs`) is `#[ignore]`d. `publish_parity`/`get_parity`
+translate the payload to the standard alphabet before comparing.
+
+## 15. HTTP accepts over-long short strings it never encodes
+
+**Observed:** AMQP short strings (routing keys, most message properties)
+are at most 255 bytes. The HTTP API only enforces that when it encodes the
+value into a message:
+
+- `POST /api/bindings/{vhost}/e/{x}/q/{q}` creates a binding whose routing
+  key is longer than 255 bytes. AMQP can't express that binding, and a
+  routed `/publish` with that key gets 400, so nothing can ever match it.
+- `/publish` of an *unroutable* message with an over-long routing key or
+  property (`message_id`, `correlation_id`, ...) answers 200
+  `{"routed": false}`. The same message routed gets 400 "Short string too
+  long, max 255".
+
+Reproduced on LavinMQ 2.10.0.
+
+**Expected:** 400 for any short-string field over 255 bytes, before
+routing.
+
+**How this crate covers it:** `binding_key_length_validated` and
+`unroutable_publish_field_length_validated` (in `src/http/validation.rs`)
+are `#[ignore]`d. `publish_field_length_validated` covers the routed case,
+which works.
+
+## 16. HTTP declare bodies coerce wrong JSON types to `false` / `{}`
+
+**Observed:** In `PUT /api/queues/...` and `PUT /api/exchanges/...`, a
+`durable`, `auto_delete` or `internal` that isn't a JSON boolean is
+accepted (201) and stored as `false`. That includes the string `"true"`,
+so `{"durable": "true"}` silently creates a non-durable queue. An
+`arguments` that isn't an object is accepted and stored as `{}`. Only an
+exchange's `type` is type-checked (400). Reproduced on LavinMQ 2.10.0.
+
+**Expected:** 400 for a field of the wrong type, like `type` gets.
+
+**How this crate covers it:** `wrong_json_types_rejected` (in
+`src/http/validation.rs`) is `#[ignore]`d.
+
+## 17. `/publish` with a header key over 255 bytes is a 500
+
+**Observed:** A `properties.headers` key longer than 255 bytes (a short
+string in AMQP field tables) makes `/publish` answer `500 Internal Server
+Error`, routed or not. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** 400, like an over-long routing key on a routed message.
+
+**How this crate covers it:** `header_key_length_validated` (in
+`src/http/validation.rs`) is `#[ignore]`d.
+
+## 18. MQTT wildcard matching
+
+Observed on LavinMQ 2.10.0 and modelled by `lavinmq_matches` in
+`src/mqtt/topic.rs`. The property `mqtt_wildcard_routing_matches_model`
+checks the model against the broker. Apart from these two points, LavinMQ
+matches the spec model `matches`.
+
+1. **`#` doesn't match the parent level.** `sport/#` doesn't match
+   `sport`. MQTT 3.1.1 §4.7.1.2 says it must ("sport/tennis/player1/#"
+   matches "sport/tennis/player1"). `sport/#` does match `sport/`, whose
+   last level is empty. Only the filter `#` on its own matches every
+   topic.
+2. **Wildcards match `$` topics.** `#` and `+/…` match topics that start
+   with `$`, such as `$sys/x`. §4.7.2 says a filter starting with a
+   wildcard must not match them. LavinMQ has no `$SYS` tree, so this only
+   matters for clients that publish to `$` topics themselves.
+
+**Upstream:** point 1 is [cloudamqp/lavinmq#2312](https://github.com/cloudamqp/lavinmq/issues/2312), point 2 is [cloudamqp/lavinmq#2313](https://github.com/cloudamqp/lavinmq/issues/2313).
+
+**How this crate covers it:** `mqtt_hash_matches_parent_level` and
+`mqtt_wildcards_skip_dollar_topics` (in `src/mqtt/tests.rs`) assert the
+spec behaviour and are `#[ignore]`d.
+
+## 19. MQTT QoS 2 PUBLISH gets a PUBACK
+
+**Observed:** LavinMQ has no QoS 2. A SUBSCRIBE asking for QoS 2 is
+granted QoS 1, which §3.9.3 allows. But a PUBLISH at QoS 2 is answered
+with a PUBACK (the QoS 1 ack), and the PUBREL a client then sends closes
+the connection. Clients that implement QoS 2 never see the PUBREC they
+wait for. With rumqttc the publish just never completes. Reproduced on
+LavinMQ 2.10.0.
+
+**Expected:** §4.3.3: the receiver of a QoS 2 PUBLISH must answer PUBREC,
+then PUBCOMP to the PUBREL. MQTT 3.1.1 has no way to refuse QoS 2, so a
+server without it should still run the handshake, even if it then
+delivers at QoS 1.
+
+**Upstream:** [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314).
+
+**How this crate covers it:** `mqtt_qos2_publish_gets_pubrec` (raw
+socket) is `#[ignore]`d. `mqtt_delivery_qos_is_the_minimum` discards
+publish QoS 2.
+
+## 20. MQTT QoS 0 publishes are delivered at QoS 1
+
+**Observed:** A message is always delivered at the subscription's
+granted QoS, whatever QoS it was published at. A QoS 0 publish therefore
+reaches a QoS 1 subscription as a QoS 1 message, with a packet id the
+client has to PUBACK. Modelled by `Qos::lavinmq_delivered` in
+`src/mqtt/qos.rs`. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** §3.8.4: delivery QoS is the minimum of the publish QoS and
+the granted QoS (`Qos::delivered`).
+
+**Upstream:** [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315).
+
+**How this crate covers it:** `mqtt_delivery_qos_is_the_minimum` checks
+the LavinMQ model. `mqtt_qos0_publish_is_delivered_at_qos0` asserts the
+spec and is `#[ignore]`d.
+
+## 21. MQTT retained messages break on non-ASCII topics
+
+**Observed:** With multi-byte UTF-8 in a topic, a new subscription can
+miss retained messages it matches. For example, a message retained on
+`p/€/€` isn't sent to a new subscription to `p/€/+`, but is sent for
+`p/€/€` or `p/#`. Live routing of the same topics works. Reproduced on
+LavinMQ 2.10.0.
+
+**Cause (from the LavinMQ source):** the retain store's topic tree splits
+topics with `StringTokenIterator`, which compares `Char::Reader#pos` (a
+byte offset) with `String#size` (a char count) and slices by char index
+with byte offsets. Once a multi-byte character has been read, tokens are
+cut in the wrong places and iteration stops early. Live routing uses
+`BytesTokenIterator`, which works on bytes throughout.
+
+**Upstream:** [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316).
+
+**How this crate covers it:** `mqtt_new_subscription_gets_retained`
+discards scenarios with non-ASCII topics or filters.
+`mqtt_retained_non_ascii_topics` runs the same property on all of them
+and is `#[ignore]`d.
+
+## 22. Topic routing keys lose a trailing empty word
+
+**Observed:** On a topic exchange, a routing key ending in `.` never
+matches, not even a binding with the identical key. `a.`, `a.b.`, `.` and
+`a..` don't route to bindings with the same key. Nor does `a.` route to
+`a.*` or `*.*`. Leading and middle empty words work (`.a`, `a..b`,
+`a.*.c` vs `a..c`). Reproduced on LavinMQ 2.10.0.
+
+**Why:** binding keys are split with `String#split(".")`, which keeps the
+trailing `""`, so `a.` is `["a", ""]`. Routing keys are walked with
+`RkIterator`, which stops when nothing is left after the last dot, so it
+yields only `a`. The word counts differ.
+
+**Expected:** RabbitMQ splits both keys with
+`binary:split(Key, <<".">>, [global])`, which keeps trailing empty parts,
+so `a.` is two words on both sides.
+
+**Upstream:** [cloudamqp/lavinmq#2310](https://github.com/cloudamqp/lavinmq/issues/2310).
+
+**How this crate covers it:** `topic_trailing_empty_word_routes` (in
+`src/tests.rs`) is `#[ignore]`d. This was the cause of the "flaky"
+`odd_x_delay_delivers_immediately`: `DelayedScenario` uses `RoutingKey`,
+which can end in `.`. On a topic-typed delayed exchange such a message was
+released immediately and then dropped as unroutable. The generator now
+never gives a topic scenario a trailing `.`.

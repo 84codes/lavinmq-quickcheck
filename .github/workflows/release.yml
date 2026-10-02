@@ -16,7 +16,7 @@ env:
   TARGET: x86_64-unknown-linux-musl
   # ring compiles C code; point cc-rs at the musl wrapper from musl-tools.
   CC_x86_64_unknown_linux_musl: musl-gcc
-  BIN: amqp-quickcheck-tests-x86_64-linux
+  BIN: lavinmq-quickcheck-tests-x86_64-linux
 
 jobs:
   build:
@@ -27,6 +27,7 @@ jobs:
         ports:
           - 5672:5672
           - 15672:15672
+          - 1883:1883
     steps:
       - uses: actions/checkout@v7
 
@@ -63,7 +64,7 @@ jobs:
         # Few cases per property: this checks the binary, not LavinMQ.
         env:
           QUICKCHECK_TESTS: "10"
-        run: ./"$BIN" --skip odd_x_delay_delivers_immediately
+        run: ./"$BIN"
 
       - uses: actions/upload-artifact@v7
         with:
