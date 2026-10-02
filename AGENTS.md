@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-`amqp-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP types, enabling property-based testing of AMQP interactions against LavinMQ. `src/http/` reuses them to check that the HTTP management API behaves like AMQP. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, delayed-message exchanges, consumer `x-priority` values, and headers-exchange routing.
+`lavinmq-quickcheck` is a Rust library that provides [QuickCheck](https://crates.io/crates/quickcheck) `Arbitrary` implementations for AMQP and MQTT 3.1.1 types, enabling property-based testing of LavinMQ. `src/http/` reuses them to check that the HTTP management API behaves like AMQP. Currently implements generators for queue names, routing keys, topic routing keys, the full set of LavinMQ queue-declaration arguments, `BasicProperties` fields, acyclic routing topologies (exchanges, queues, bindings, dead-lettering), consistent-hash exchange scenarios, stream consumer `x-stream-offset` values, delayed-message exchanges, consumer `x-priority` values, headers-exchange routing, and MQTT topics/filters, QoS, retained messages, sessions and malformed packets (`src/mqtt/`).
 
 ## Commands
 
@@ -10,7 +10,7 @@
 # Build
 cargo build
 
-# Run all tests (requires a running LavinMQ instance on localhost:5672)
+# Run all tests (requires a running LavinMQ instance on localhost:5672 and :1883)
 cargo test
 
 # Check without building
@@ -29,10 +29,10 @@ cargo clippy
 
 ## External Dependencies (Runtime)
 
-Tests require a **LavinMQ server** running on `amqp://localhost:5672` with default credentials (`guest:guest`), and its management HTTP API on `http://localhost:15672` (used by the policy tests). Without it, `cargo test` will fail with connection errors. You can start one with:
+Tests require a **LavinMQ server** running on `amqp://localhost:5672` with default credentials (`guest:guest`), its management HTTP API on `http://localhost:15672` (used by the policy tests), and MQTT on `localhost:1883`. Without it, `cargo test` will fail with connection errors. You can start one with:
 
 ```sh
-docker run -d --rm -p 5672:5672 -p 15672:15672 cloudamqp/lavinmq
+docker run -d --rm -p 5672:5672 -p 15672:15672 -p 1883:1883 cloudamqp/lavinmq
 ```
 
 ## Project Structure
@@ -63,6 +63,15 @@ src/
     validation.rs — HTTP-only input validation (no AMQP side: lapin can't send >255-byte short strings): name/routing-key/property/header-key lengths via LongName, delayed names past the internal-queue limit, wrong JSON types; ignored quirks #5, #15–#17.
     bindings.rs — bind/unbind parity (queue + exchange destinations, missing dest, headers args) + ignored properties_key quirk #10.
     exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE).
+  mqtt/         — MQTT 3.1.1. Generators + models are public; client.rs, raw.rs, tests.rs are #[cfg(test)].
+    topic.rs    — TopicName, Subscription (filter derived from a topic, ~50% match), InvalidTopicName/Filter; matches() (spec) vs lavinmq_matches() (quirk #18).
+    qos.rs      — Qos 0–2; granted() (max 1), delivered() (spec min) vs lavinmq_delivered() (quirk #20).
+    retain.rs   — RetainScenario (retained publish/clear runs + a filter), with_prefix() for per-case isolation.
+    session.rs  — SessionScenario (clean/persistent connect, offline publishes, reconnect).
+    malformed.rs — BadUtf8Topic, BadProtocolLevel, BadSubscribeFlags.
+    client.rs   — rumqttc wrapper: Conn drives the event loop in a task; subscribe/publish wait for acks, publishes_until(sentinel), disconnect() waits for the socket to close, abort() for unclean close.
+    raw.rs      — hand-encoded packets over TCP for what rumqttc won't send.
+    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #18–#21.
 Cargo.toml      — Package manifest (edition 2024).
 ```
 
@@ -75,6 +84,7 @@ This is a library crate (`lib.rs` is the root — no binary target).
 | `quickcheck`       | Property-based testing framework + `Arbitrary` trait | Runtime dep |
 | `quickcheck_macros`| `#[quickcheck]` proc macro for test functions | Dev only       |
 | `lapin`            | Async AMQP client (`BasicProperties` types; tests) | Runtime dep |
+| `rumqttc`          | Async MQTT client (`default-features = false`: no TLS) | Dev only |
 | `tokio`            | Async runtime (multi-thread + macros)        | Dev only       |
 | `futures-lite`     | `StreamExt` for consuming AMQP messages      | Dev only       |
 | `ureq`             | Sync HTTP client for the management API (policies, `src/http/`) | Dev only |
@@ -124,4 +134,4 @@ Because `#[quickcheck]` requires synchronous functions returning `bool`, each te
 3. **Retry loop in `Arbitrary`** — `QueueName::arbitrary` uses a `loop` to reject reserved prefixes. This is safe because the probability of generating `amq.` prefix is vanishingly small, but it's technically unbounded.
 4. **No `shrink` implementation** — The `Arbitrary` impl only defines `arbitrary`, not `shrink`. QuickCheck will use default shrinking on the inner `String`, which may produce invalid names during shrink. If shrink-generated names cause test failures unrelated to the property, consider implementing `shrink` with domain constraints.
 5. **Ignored tests document LavinMQ bugs** — `#[ignore]`d tests assert the *desired* broker behaviour for known bugs (see `lavinmq-quirks.md`). Run them with `cargo test -- --ignored`; one passing means the bug is fixed and the `#[ignore]` can go.
-6. **Known flake, not yet investigated: `odd_x_delay_delivers_immediately`** — It sometimes fails in the full parallel suite, even with policy tests skipped, but has never failed when run alone. Policy churn doesn't affect the delayed exchange (0/30 lost in a stress check). One suspect is the 2 s arrival timeout under load. Still fails (3/5 full runs) with per-test vhosts, so it isn't cross-test name or policy interference. Parked on 2026-10-01.
+6. **MQTT test isolation** — The vhost comes from the username (`qc-<fn>:guest`, see `client::options`). Client ids must be unique (`client::client_id`), or a new connection kicks off the old one. Retained messages outlive a case, so retain/will tests put a unique `case-<n>/` level in front of their topics. To know a subscriber got everything, tests publish to `SENTINEL` last and read up to it (one session queue, so order holds).

@@ -396,3 +396,111 @@ Error`, routed or not. Reproduced on LavinMQ 2.10.0.
 
 **How this crate covers it:** `header_key_length_validated` (in
 `src/http/validation.rs`) is `#[ignore]`d.
+
+## 18. MQTT wildcard matching
+
+Observed on LavinMQ 2.10.0 and modelled by `lavinmq_matches` in
+`src/mqtt/topic.rs`. The property `mqtt_wildcard_routing_matches_model`
+checks the model against the broker. Apart from these two points, LavinMQ
+matches the spec model `matches`.
+
+1. **`#` doesn't match the parent level.** `sport/#` doesn't match
+   `sport`. MQTT 3.1.1 §4.7.1.2 says it must ("sport/tennis/player1/#"
+   matches "sport/tennis/player1"). `sport/#` does match `sport/`, whose
+   last level is empty. Only the filter `#` on its own matches every
+   topic.
+2. **Wildcards match `$` topics.** `#` and `+/…` match topics that start
+   with `$`, such as `$sys/x`. §4.7.2 says a filter starting with a
+   wildcard must not match them. LavinMQ has no `$SYS` tree, so this only
+   matters for clients that publish to `$` topics themselves.
+
+**Upstream:** point 1 is [cloudamqp/lavinmq#2312](https://github.com/cloudamqp/lavinmq/issues/2312), point 2 is [cloudamqp/lavinmq#2313](https://github.com/cloudamqp/lavinmq/issues/2313).
+
+**How this crate covers it:** `mqtt_hash_matches_parent_level` and
+`mqtt_wildcards_skip_dollar_topics` (in `src/mqtt/tests.rs`) assert the
+spec behaviour and are `#[ignore]`d.
+
+## 19. MQTT QoS 2 PUBLISH gets a PUBACK
+
+**Observed:** LavinMQ has no QoS 2. A SUBSCRIBE asking for QoS 2 is
+granted QoS 1, which §3.9.3 allows. But a PUBLISH at QoS 2 is answered
+with a PUBACK (the QoS 1 ack), and the PUBREL a client then sends closes
+the connection. Clients that implement QoS 2 never see the PUBREC they
+wait for. With rumqttc the publish just never completes. Reproduced on
+LavinMQ 2.10.0.
+
+**Expected:** §4.3.3: the receiver of a QoS 2 PUBLISH must answer PUBREC,
+then PUBCOMP to the PUBREL. MQTT 3.1.1 has no way to refuse QoS 2, so a
+server without it should still run the handshake, even if it then
+delivers at QoS 1.
+
+**Upstream:** [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314).
+
+**How this crate covers it:** `mqtt_qos2_publish_gets_pubrec` (raw
+socket) is `#[ignore]`d. `mqtt_delivery_qos_is_the_minimum` discards
+publish QoS 2.
+
+## 20. MQTT QoS 0 publishes are delivered at QoS 1
+
+**Observed:** A message is always delivered at the subscription's
+granted QoS, whatever QoS it was published at. A QoS 0 publish therefore
+reaches a QoS 1 subscription as a QoS 1 message, with a packet id the
+client has to PUBACK. Modelled by `Qos::lavinmq_delivered` in
+`src/mqtt/qos.rs`. Reproduced on LavinMQ 2.10.0.
+
+**Expected:** §3.8.4: delivery QoS is the minimum of the publish QoS and
+the granted QoS (`Qos::delivered`).
+
+**Upstream:** [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315).
+
+**How this crate covers it:** `mqtt_delivery_qos_is_the_minimum` checks
+the LavinMQ model. `mqtt_qos0_publish_is_delivered_at_qos0` asserts the
+spec and is `#[ignore]`d.
+
+## 21. MQTT retained messages break on non-ASCII topics
+
+**Observed:** With multi-byte UTF-8 in a topic, a new subscription can
+miss retained messages it matches. For example, a message retained on
+`p/€/€` isn't sent to a new subscription to `p/€/+`, but is sent for
+`p/€/€` or `p/#`. Live routing of the same topics works. Reproduced on
+LavinMQ 2.10.0.
+
+**Cause (from the LavinMQ source):** the retain store's topic tree splits
+topics with `StringTokenIterator`, which compares `Char::Reader#pos` (a
+byte offset) with `String#size` (a char count) and slices by char index
+with byte offsets. Once a multi-byte character has been read, tokens are
+cut in the wrong places and iteration stops early. Live routing uses
+`BytesTokenIterator`, which works on bytes throughout.
+
+**Upstream:** [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316).
+
+**How this crate covers it:** `mqtt_new_subscription_gets_retained`
+discards scenarios with non-ASCII topics or filters.
+`mqtt_retained_non_ascii_topics` runs the same property on all of them
+and is `#[ignore]`d.
+
+## 22. Topic routing keys lose a trailing empty word
+
+**Observed:** On a topic exchange, a routing key ending in `.` never
+matches, not even a binding with the identical key. `a.`, `a.b.`, `.` and
+`a..` don't route to bindings with the same key. Nor does `a.` route to
+`a.*` or `*.*`. Leading and middle empty words work (`.a`, `a..b`,
+`a.*.c` vs `a..c`). Reproduced on LavinMQ 2.10.0.
+
+**Why:** binding keys are split with `String#split(".")`, which keeps the
+trailing `""`, so `a.` is `["a", ""]`. Routing keys are walked with
+`RkIterator`, which stops when nothing is left after the last dot, so it
+yields only `a`. The word counts differ.
+
+**Expected:** RabbitMQ splits both keys with
+`binary:split(Key, <<".">>, [global])`, which keeps trailing empty parts,
+so `a.` is two words on both sides.
+
+**Upstream:** [cloudamqp/lavinmq#2310](https://github.com/cloudamqp/lavinmq/issues/2310).
+
+**How this crate covers it:** `topic_trailing_empty_word_routes` (in
+`src/tests.rs`) is `#[ignore]`d. This was the cause of the "flaky"
+`odd_x_delay_delivers_immediately`: `DelayedScenario` uses `RoutingKey`,
+which can end in `.`. On a topic-typed delayed exchange such a message was
+released immediately and then dropped as unroutable. The generator now
+never gives a topic scenario a trailing `.`.

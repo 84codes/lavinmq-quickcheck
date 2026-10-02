@@ -13,7 +13,7 @@ pub const ONE_HOUR_MS: u32 = 3_600_000;
 /// LavinMQ's 256-byte cap.
 pub const MIN_LONG_NAME: usize = 245;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DelayedType {
     Direct,
     Fanout,
@@ -150,12 +150,19 @@ pub struct DelayedScenario {
 impl Arbitrary for DelayedScenario {
     fn arbitrary(g: &mut Gen) -> Self {
         let suffix = u64::arbitrary(g);
+        let ty = DelayedType::arbitrary(g);
+        let mut routing_key = RoutingKey::arbitrary(g).0;
+        if ty == DelayedType::Topic && routing_key.ends_with('.') {
+            // A trailing empty word never routes (lavinmq-quirks.md #22).
+            routing_key.pop();
+            routing_key.push('x');
+        }
         DelayedScenario {
             exchange: format!("qc_dx_{suffix:x}"),
             queue: format!("qc_dq_{suffix:x}"),
-            ty: DelayedType::arbitrary(g),
+            ty,
             style: DeclareStyle::arbitrary(g),
-            routing_key: RoutingKey::arbitrary(g).0,
+            routing_key,
             delay: OddDelay::arbitrary(g),
         }
     }
@@ -181,6 +188,13 @@ mod generator_tests {
             | AMQPValue::FieldTable(_) => true,
             _ => false,
         }
+    }
+
+    /// LavinMQ never routes a topic key ending in `.` (quirk #22), which
+    /// would make the delay test fail for an unrelated reason.
+    #[quickcheck]
+    fn topic_scenarios_have_no_trailing_empty_word(s: DelayedScenario) -> bool {
+        s.ty != DelayedType::Topic || !s.routing_key.ends_with('.')
     }
 
     #[quickcheck]

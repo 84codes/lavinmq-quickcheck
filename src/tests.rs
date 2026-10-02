@@ -326,6 +326,59 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
     })
 }
 
+/// Desired: a topic key ending in `.` has a trailing empty word, like
+/// RabbitMQ splits it, so a binding with the same key matches. Ignored:
+/// LavinMQ drops that word from routing keys only (`lavinmq-quirks.md` #22).
+#[quickcheck]
+#[ignore = "LavinMQ drops a trailing empty word; cloudamqp/lavinmq#2310"]
+fn topic_trailing_empty_word_routes(topic: TopicRoutingKey) -> bool {
+    let key = format!("{}.", topic.routing_key);
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel("topic_trailing_empty_word_routes").await;
+        channel
+            .confirm_select(ConfirmSelectOptions::default())
+            .await
+            .expect("Failed to enable confirms");
+        let queue = channel
+            .queue_declare("", classic_queue_opts(), FieldTable::default())
+            .await
+            .expect("Failed to declare queue");
+        let queue_name = queue.name().as_str();
+        channel
+            .queue_bind(
+                queue_name,
+                "amq.topic",
+                &key,
+                QueueBindOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .expect("Failed to bind queue");
+        channel
+            .basic_publish(
+                "amq.topic",
+                &key,
+                BasicPublishOptions::default(),
+                b"x",
+                BasicProperties::default(),
+            )
+            .await
+            .expect("Failed to publish")
+            .await
+            .expect("Failed to confirm publish");
+        // Confirmed, so it's in the queue now if it was routed at all.
+        let got = channel
+            .basic_get(queue_name, BasicGetOptions { no_ack: true })
+            .await
+            .expect("Failed to get");
+        let _ = channel
+            .queue_delete(queue_name, QueueDeleteOptions::default())
+            .await;
+        got.is_some()
+    })
+}
+
 use crate::arguments::{
     CacheSize, CacheTtl, ConsumerTimeout, DeadLetterExchange, DeadLetterRoutingKey,
     DeduplicationHeader, DeliveryLimit, Expires, MaxLength, MaxLengthBytes, MaxPriority,
