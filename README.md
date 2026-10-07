@@ -74,7 +74,6 @@ still open. They fail until the bug is fixed:
 | `consistent_hash_survives_policy_change` | [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300) |
 | `topic_trailing_empty_word_routes` | [cloudamqp/lavinmq#2310](https://github.com/cloudamqp/lavinmq/issues/2310) |
 | `mqtt_hash_matches_parent_level` | [cloudamqp/lavinmq#2312](https://github.com/cloudamqp/lavinmq/issues/2312) |
-| `mqtt_wildcards_skip_dollar_topics` | [cloudamqp/lavinmq#2313](https://github.com/cloudamqp/lavinmq/issues/2313) |
 | `mqtt_qos2_publish_gets_pubrec` | [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314) |
 | `mqtt_qos0_publish_is_delivered_at_qos0` | [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315) |
 | `mqtt_retained_non_ascii_topics` | [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316) |

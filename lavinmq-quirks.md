@@ -401,8 +401,8 @@ Error`, routed or not. Reproduced on LavinMQ 2.10.0.
 
 Observed on LavinMQ 2.10.0 and modelled by `lavinmq_matches` in
 `src/mqtt/topic.rs`. The property `mqtt_wildcard_routing_matches_model`
-checks the model against the broker. Apart from these two points, LavinMQ
-matches the spec model `matches`.
+checks the model against the broker. Apart from point 1, LavinMQ matches
+the spec model `matches`.
 
 1. **`#` doesn't match the parent level.** `sport/#` doesn't match
    `sport`. MQTT 3.1.1 §4.7.1.2 says it must ("sport/tennis/player1/#"
@@ -412,13 +412,15 @@ matches the spec model `matches`.
 2. **Wildcards match `$` topics.** `#` and `+/…` match topics that start
    with `$`, such as `$sys/x`. §4.7.2 says a filter starting with a
    wildcard must not match them. LavinMQ has no `$SYS` tree, so this only
-   matters for clients that publish to `$` topics themselves.
+   matters for clients that publish to `$` topics themselves. Fixed by
+   [cloudamqp/lavinmq#2366](https://github.com/cloudamqp/lavinmq/pull/2366),
+   which the model follows.
 
 **Upstream:** point 1 is [cloudamqp/lavinmq#2312](https://github.com/cloudamqp/lavinmq/issues/2312), point 2 is [cloudamqp/lavinmq#2313](https://github.com/cloudamqp/lavinmq/issues/2313).
 
 **How this crate covers it:** `mqtt_hash_matches_parent_level` and
 `mqtt_wildcards_skip_dollar_topics` (in `src/mqtt/tests.rs`) assert the
-spec behaviour and are `#[ignore]`d.
+spec behaviour. `mqtt_hash_matches_parent_level` is `#[ignore]`d.
 
 ## 19. MQTT QoS 2 PUBLISH gets a PUBACK
 

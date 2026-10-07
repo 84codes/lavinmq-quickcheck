@@ -69,10 +69,8 @@ fn mqtt_hash_matches_parent_level(t: TopicName) -> bool {
     })
 }
 
-/// `lavinmq-quirks.md` #18: a leading wildcard must not match a `$` topic
-/// (MQTT 3.1.1 §4.7.2).
+/// A leading wildcard must not match a `$` topic (MQTT 3.1.1 §4.7.2).
 #[quickcheck]
-#[ignore = "LavinMQ: wildcards match $ topics; cloudamqp/lavinmq#2313"]
 fn mqtt_wildcards_skip_dollar_topics(t: TopicName, plus: bool) -> bool {
     Runtime::new().unwrap().block_on(async {
         let topic = format!("$sys/{}", t.0);
