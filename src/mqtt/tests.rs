@@ -84,22 +84,18 @@ fn mqtt_wildcards_skip_dollar_topics(t: TopicName, plus: bool) -> bool {
 }
 
 #[quickcheck]
-fn mqtt_subscribe_grants_at_most_qos1(requested: Qos) -> bool {
+fn mqtt_subscribe_grants_requested_qos(requested: Qos) -> bool {
     Runtime::new().unwrap().block_on(async {
-        let mut conn = connect("mqtt_subscribe_grants_at_most_qos1").await;
+        let mut conn = connect("mqtt_subscribe_grants_requested_qos").await;
         let codes = conn.subscribe("a", qos(requested)).await;
         conn.disconnect().await;
-        codes == [SubscribeReasonCode::Success(qos(requested.granted()))]
+        codes == [SubscribeReasonCode::Success(qos(requested))]
     })
 }
 
 #[quickcheck]
-fn mqtt_delivery_qos_is_the_minimum(requested: Qos, published: Qos) -> TestResult {
+fn mqtt_delivery_qos_is_the_minimum(requested: Qos, published: Qos) -> bool {
     const TEST: &str = "mqtt_delivery_qos_is_the_minimum";
-    if published == Qos(2) {
-        // LavinMQ can't complete a QoS 2 publish (quirk #19).
-        return TestResult::discard();
-    }
     Runtime::new().unwrap().block_on(async {
         let mut sub = connect(TEST).await;
         sub.subscribe("a", qos(requested)).await;
@@ -114,15 +110,13 @@ fn mqtt_delivery_qos_is_the_minimum(requested: Qos, published: Qos) -> TestResul
         let got = sub.publishes_until(SENTINEL).await;
         sub.disconnect().await;
         publisher.disconnect().await;
-        let want = qos(published.lavinmq_delivered(requested.granted()));
-        TestResult::from_bool(got.len() == 1 && got[0].qos == want)
+        got.len() == 1 && got[0].qos == qos(published.delivered(requested))
     })
 }
 
 /// `lavinmq-quirks.md` #20: delivery QoS must be the minimum of publish and
 /// granted QoS (MQTT 3.1.1 §3.8.4).
 #[quickcheck]
-#[ignore = "LavinMQ: QoS 0 publishes are delivered at QoS 1; cloudamqp/lavinmq#2315"]
 fn mqtt_qos0_publish_is_delivered_at_qos0(requested: Qos) -> bool {
     const TEST: &str = "mqtt_qos0_publish_is_delivered_at_qos0";
     Runtime::new().unwrap().block_on(async {
@@ -146,7 +140,6 @@ fn mqtt_qos0_publish_is_delivered_at_qos0(requested: Qos) -> bool {
 /// `lavinmq-quirks.md` #19: a QoS 2 PUBLISH must get a PUBREC
 /// (MQTT 3.1.1 §4.3.3).
 #[quickcheck]
-#[ignore = "LavinMQ: QoS 2 PUBLISH gets PUBACK; cloudamqp/lavinmq#2314"]
 fn mqtt_qos2_publish_gets_pubrec(t: TopicName, packet_id: u16) -> TestResult {
     if packet_id == 0 {
         return TestResult::discard();
