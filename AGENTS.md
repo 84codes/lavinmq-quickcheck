@@ -50,7 +50,7 @@ src/
   stream_offset.rs — Arbitrary x-stream-offset (first/next/int in every AMQP int width/timestamp extremes) + expected-delivery model.
   consumer_priority.rs — Arbitrary x-priority consumer-argument values: valid (any int width within i32) and invalid (out of range / non-int).
   delayed.rs    — Arbitrary delayed-exchange scenarios (both declare styles), odd x-delay values, over-long exchange names.
-  routing.rs    — Arbitrary Topology: fanout exchanges with optional alternate exchange, queues with optional DLX, bindings in shuffled order; guaranteed acyclic. simulate() models LavinMQ's order-dependent AE semantics.
+  routing.rs    — Arbitrary Topology: fanout exchanges with optional alternate exchange, queues with optional DLX, bindings in shuffled order; guaranteed acyclic. simulate() models per-exchange AE semantics (RabbitMQ's; LavinMQ since cloudamqp/lavinmq#2376).
   tests.rs      — #[cfg(test)] integration tests against a real broker.
   http/         — #[cfg(test)] differential tests: same operation over AMQP (vhost qc-<fn>-amqp) and the HTTP API (qc-<fn>-http); outcomes must agree (diff::equivalent maps 406→400) and the resources must GET equal after normalize().
     client.rs   — ureq wrapper (put/get/delete) + encode_segment (escapes `.` too).
