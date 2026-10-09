@@ -24,7 +24,7 @@ LavinMQ bugs. Each is written up in [`lavinmq-quirks.md`](lavinmq-quirks.md).
 | Delayed-message exchange | Both declare styles, `x-delay` values that can't be read as a delay, over-long names | Such `x-delay` values mean "deliver now". Over-long names fail cleanly (ignored test, see below) |
 | Consumer priority | `x-priority` values, valid and invalid | In-range integers are accepted, everything else gets 406 |
 | Headers exchange | Exchange and binding `x-match`, messages without headers, values of mixed types | Routing matches `headers::matches`. Invalid `x-match` gets 406 |
-| MQTT routing | Topic/filter pairs (`+`, `#`, empty levels, `$` topics, non-ASCII), QoS 0–2 | Delivery matches `mqtt::topic::lavinmq_matches`. Granted and delivered QoS match `mqtt::qos` |
+| MQTT routing | Topic/filter pairs (`+`, `#`, empty levels, `$` topics, non-ASCII), QoS 0–2 | Delivery matches `mqtt::topic::matches`. Granted and delivered QoS match `mqtt::qos` |
 | MQTT retain, will, sessions | Retained publish/clear sequences, wills, clean/persistent reconnects | New subscriptions get the latest retained message. Wills only fire on an unclean close. Queued messages and Session Present follow `mqtt::session` |
 | MQTT malformed packets | Bad topic names and filters, ill-formed UTF-8, QoS 3, bad SUBSCRIBE flags, bad protocol levels | Sent over a raw socket. The broker closes the connection, or refuses with CONNACK 0x01 / SUBACK 0x80 |
 
@@ -73,8 +73,6 @@ still open. They fail until the bug is fixed:
 | `delayed_exchange_long_name_is_clean_error` | [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297) |
 | `consistent_hash_survives_policy_change` | [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300) |
 | `topic_trailing_empty_word_routes` | [cloudamqp/lavinmq#2310](https://github.com/cloudamqp/lavinmq/issues/2310) |
-| `mqtt_hash_matches_parent_level` | [cloudamqp/lavinmq#2312](https://github.com/cloudamqp/lavinmq/issues/2312) |
-| `mqtt_wildcards_skip_dollar_topics` | [cloudamqp/lavinmq#2313](https://github.com/cloudamqp/lavinmq/issues/2313) |
 | `mqtt_qos2_publish_gets_pubrec` | [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314) |
 | `mqtt_qos0_publish_is_delivered_at_qos0` | [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315) |
 | `mqtt_retained_non_ascii_topics` | [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316) |

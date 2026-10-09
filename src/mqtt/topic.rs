@@ -12,21 +12,13 @@ const DOLLAR_LEVEL: &str = "$sys";
 /// `#` also matches the parent level (`a/#` matches `a`), and a filter
 /// starting with a wildcard never matches a topic starting with `$`.
 pub fn matches(filter: &str, topic: &str) -> bool {
-    let dollar = topic.starts_with('$') && filter.starts_with(['#', '+']);
-    !dollar && walk(filter, topic, true)
-}
-
-/// How LavinMQ matches today (`lavinmq-quirks.md` #18): `#` needs at least
-/// one more level, and wildcards match `$` topics like any other.
-pub fn lavinmq_matches(filter: &str, topic: &str) -> bool {
-    walk(filter, topic, false)
-}
-
-fn walk(filter: &str, topic: &str, hash_matches_parent: bool) -> bool {
+    if topic.starts_with('$') && filter.starts_with(['#', '+']) {
+        return false;
+    }
     let mut topic = topic.split('/');
     for level in filter.split('/') {
         match (level, topic.next()) {
-            ("#", t) => return t.is_some() || hash_matches_parent,
+            ("#", _) => return true,
             (_, None) => return false,
             ("+", Some(_)) => {}
             (l, Some(t)) if l != t => return false,
@@ -239,30 +231,6 @@ mod tests {
         assert!(!matches("+/monitor/Clients", "$SYS/monitor/Clients"));
         assert!(matches("$SYS/#", "$SYS/monitor/Clients"));
         assert!(matches("$SYS/monitor/+", "$SYS/monitor/Clients"));
-    }
-
-    #[test]
-    fn lavinmq_hash_skips_parent_level() {
-        assert!(!lavinmq_matches("sport/#", "sport"));
-        assert!(lavinmq_matches("sport/#", "sport/"));
-        assert!(lavinmq_matches("#", "sport"));
-    }
-
-    #[test]
-    fn lavinmq_wildcards_match_dollar_topics() {
-        assert!(lavinmq_matches("#", "$SYS/a"));
-        assert!(lavinmq_matches("+/a", "$SYS/a"));
-    }
-
-    #[quickcheck]
-    fn lavinmq_otherwise_follows_spec(s: Subscription) -> bool {
-        let parent_level = s
-            .filter
-            .strip_suffix("/#")
-            .is_some_and(|parent| matches(parent, &s.topic));
-        s.topic.starts_with('$')
-            || parent_level
-            || lavinmq_matches(&s.filter, &s.topic) == s.matches()
     }
 
     #[test]

@@ -1,7 +1,7 @@
 //! Retained-message scenarios (MQTT 3.1.1 §3.3.1.3): a run of retained
 //! publishes, then a new subscription.
 
-use super::topic::{Subscription, TopicName};
+use super::topic::{Subscription, TopicName, matches};
 use quickcheck::{Arbitrary, Gen};
 use std::collections::BTreeMap;
 
@@ -48,7 +48,7 @@ impl RetainScenario {
     }
 
     /// The retained messages a new subscription to `filter` receives.
-    pub fn expected(&self, matches: fn(&str, &str) -> bool) -> BTreeMap<String, Vec<u8>> {
+    pub fn expected(&self) -> BTreeMap<String, Vec<u8>> {
         let mut store = self.retained();
         store.retain(|topic, _| matches(&self.filter, topic));
         store
@@ -86,7 +86,6 @@ impl Arbitrary for RetainScenario {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mqtt::topic::matches;
 
     fn scenario(publishes: &[(&str, &[u8])], filter: &str) -> RetainScenario {
         RetainScenario {
@@ -103,11 +102,7 @@ mod tests {
     fn scenarios_often_deliver_something() {
         let mut g = Gen::new(100);
         let hits = (0..1000)
-            .filter(|_| {
-                !RetainScenario::arbitrary(&mut g)
-                    .expected(matches)
-                    .is_empty()
-            })
+            .filter(|_| !RetainScenario::arbitrary(&mut g).expected().is_empty())
             .count();
         assert!((250..=750).contains(&hits), "{hits}");
     }
@@ -138,6 +133,6 @@ mod tests {
     fn expected_filters_by_match() {
         let s = scenario(&[("a/x", b"1"), ("b/x", b"2")], "a/+");
         let want = BTreeMap::from([("a/x".into(), b"1".to_vec())]);
-        assert_eq!(s.expected(matches), want);
+        assert_eq!(s.expected(), want);
     }
 }

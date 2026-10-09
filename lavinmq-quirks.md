@@ -399,10 +399,8 @@ Error`, routed or not. Reproduced on LavinMQ 2.10.0.
 
 ## 18. MQTT wildcard matching
 
-Observed on LavinMQ 2.10.0 and modelled by `lavinmq_matches` in
-`src/mqtt/topic.rs`. The property `mqtt_wildcard_routing_matches_model`
-checks the model against the broker. Apart from these two points, LavinMQ
-matches the spec model `matches`.
+Observed on LavinMQ 2.10.0. Apart from these two points, LavinMQ matched
+the spec model `matches` in `src/mqtt/topic.rs`.
 
 1. **`#` doesn't match the parent level.** `sport/#` doesn't match
    `sport`. MQTT 3.1.1 §4.7.1.2 says it must ("sport/tennis/player1/#"
@@ -415,10 +413,12 @@ matches the spec model `matches`.
    matters for clients that publish to `$` topics themselves.
 
 **Upstream:** point 1 is [cloudamqp/lavinmq#2312](https://github.com/cloudamqp/lavinmq/issues/2312), point 2 is [cloudamqp/lavinmq#2313](https://github.com/cloudamqp/lavinmq/issues/2313).
+Both fixed by [cloudamqp/lavinmq#2377](https://github.com/cloudamqp/lavinmq/pull/2377).
 
-**How this crate covers it:** `mqtt_hash_matches_parent_level` and
-`mqtt_wildcards_skip_dollar_topics` (in `src/mqtt/tests.rs`) assert the
-spec behaviour and are `#[ignore]`d.
+**How this crate covers it:** `mqtt_wildcard_routing_matches_model` and
+the retain tests check routing against `matches`.
+`mqtt_hash_matches_parent_level` and `mqtt_wildcards_skip_dollar_topics`
+(in `src/mqtt/tests.rs`) test the two points on their own.
 
 ## 19. MQTT QoS 2 PUBLISH gets a PUBACK
 

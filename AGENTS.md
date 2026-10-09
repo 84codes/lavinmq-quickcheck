@@ -64,14 +64,14 @@ src/
     bindings.rs — bind/unbind parity (queue + exchange destinations, missing dest, headers args) + ignored properties_key quirk #10.
     exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE) + ignored internal-redeclare quirk #23.
   mqtt/         — MQTT 3.1.1. Generators + models are public; client.rs, raw.rs, tests.rs are #[cfg(test)].
-    topic.rs    — TopicName, Subscription (filter derived from a topic, ~50% match), InvalidTopicName/Filter; matches() (spec) vs lavinmq_matches() (quirk #18).
+    topic.rs    — TopicName, Subscription (filter derived from a topic, ~50% match), InvalidTopicName/Filter; matches() (spec).
     qos.rs      — Qos 0–2; granted() (max 1), delivered() (spec min) vs lavinmq_delivered() (quirk #20).
     retain.rs   — RetainScenario (retained publish/clear runs + a filter), with_prefix() for per-case isolation.
     session.rs  — SessionScenario (clean/persistent connect, offline publishes, reconnect).
     malformed.rs — BadUtf8Topic, BadProtocolLevel, BadSubscribeFlags.
     client.rs   — rumqttc wrapper: Conn drives the event loop in a task; subscribe/publish wait for acks, publishes_until(sentinel), disconnect() waits for the socket to close, abort() for unclean close.
     raw.rs      — hand-encoded packets over TCP for what rumqttc won't send.
-    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #18–#21.
+    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #19–#21.
 Cargo.toml      — Package manifest (edition 2024).
 ```
 

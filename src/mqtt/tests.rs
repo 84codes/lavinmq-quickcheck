@@ -6,9 +6,7 @@ use super::raw::{
 };
 use super::retain::RetainScenario;
 use super::session::SessionScenario;
-use super::topic::{
-    InvalidTopicFilter, InvalidTopicName, Subscription, TopicName, lavinmq_matches,
-};
+use super::topic::{InvalidTopicFilter, InvalidTopicName, Subscription, TopicName};
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
 use rumqttc::{LastWill, Packet, Publish, QoS, SubscribeReasonCode};
@@ -48,7 +46,7 @@ fn mqtt_wildcard_routing_matches_model(s: Subscription, payload: Vec<u8>) -> boo
             &payload,
         )
         .await;
-        if lavinmq_matches(&s.filter, &s.topic) {
+        if s.matches() {
             got.len() == 1 && got[0].payload == payload
         } else {
             got.is_empty()
@@ -58,7 +56,6 @@ fn mqtt_wildcard_routing_matches_model(s: Subscription, payload: Vec<u8>) -> boo
 
 /// `lavinmq-quirks.md` #18: `a/#` must also match `a` (MQTT 3.1.1 §4.7.1.2).
 #[quickcheck]
-#[ignore = "LavinMQ: # doesn't match the parent level; cloudamqp/lavinmq#2312"]
 fn mqtt_hash_matches_parent_level(t: TopicName) -> bool {
     Runtime::new().unwrap().block_on(async {
         let filter = format!("{}/#", t.0);
@@ -72,7 +69,6 @@ fn mqtt_hash_matches_parent_level(t: TopicName) -> bool {
 /// `lavinmq-quirks.md` #18: a leading wildcard must not match a `$` topic
 /// (MQTT 3.1.1 §4.7.2).
 #[quickcheck]
-#[ignore = "LavinMQ: wildcards match $ topics; cloudamqp/lavinmq#2313"]
 fn mqtt_wildcards_skip_dollar_topics(t: TopicName, plus: bool) -> bool {
     Runtime::new().unwrap().block_on(async {
         let topic = format!("$sys/{}", t.0);
@@ -186,7 +182,7 @@ fn retained_matches_model(test: &str, s: RetainScenario) -> bool {
             .into_iter()
             .map(|p| (p.topic, p.payload.to_vec()))
             .collect();
-        all_retained && got == s.expected(lavinmq_matches)
+        all_retained && got == s.expected()
     })
 }
 
