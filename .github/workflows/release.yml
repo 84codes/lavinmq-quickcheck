@@ -23,7 +23,9 @@ jobs:
     runs-on: ubuntu-24.04
     services:
       lavinmq:
-        image: cloudamqp/lavinmq:latest
+        # main, not latest: the suite follows LavinMQ main, and a fix there
+        # would fail the smoke test against the last release.
+        image: cloudamqp/lavinmq:main
         ports:
           - 5672:5672
           - 15672:15672
