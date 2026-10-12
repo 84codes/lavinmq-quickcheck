@@ -745,12 +745,19 @@ use crate::properties::{
     DeliveryMode, Expiration, Headers, MessageId, MessageKind, MessageTimestamp, Priority, ReplyTo,
 };
 
+/// Declares `name`, publishes to it with `props` and returns whether the
+/// broker acked the publish. A rejected publish closes the channel, so the
+/// confirm errors and the queue is left for the vhost reset to clean up.
 async fn publish_with_props(channel: &lapin::Channel, name: &str, props: BasicProperties) -> bool {
-    let declared = channel
-        .queue_declare(name.into(), classic_queue_opts(), FieldTable::default())
+    let ready = channel
+        .confirm_select(ConfirmSelectOptions::default())
         .await
-        .is_ok();
-    if !declared {
+        .is_ok()
+        && channel
+            .queue_declare(name.into(), classic_queue_opts(), FieldTable::default())
+            .await
+            .is_ok();
+    if !ready {
         return false;
     }
     let res = channel
@@ -763,7 +770,7 @@ async fn publish_with_props(channel: &lapin::Channel, name: &str, props: BasicPr
         )
         .await;
     let ok = match res {
-        Ok(confirm) => confirm.await.is_ok(),
+        Ok(confirm) => matches!(confirm.await, Ok(Confirmation::Ack(_))),
         Err(_) => false,
     };
     let _ = channel
@@ -797,15 +804,35 @@ single_prop_publish_test!(publish_with_cluster_id, ClusterId);
 single_prop_publish_test!(publish_with_delivery_mode, DeliveryMode);
 single_prop_publish_test!(publish_with_priority, Priority);
 single_prop_publish_test!(publish_with_timestamp, MessageTimestamp);
-single_prop_publish_test!(publish_with_expiration, Expiration);
 single_prop_publish_test!(publish_with_headers, Headers);
+
+#[quickcheck]
+fn publish_with_expiration(name: QueueName, exp: Expiration) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel("publish_with_expiration").await;
+        let props = exp.apply_to(BasicProperties::default());
+        publish_with_props(&channel, &name.0, props).await == exp.lavinmq_accepted()
+    })
+}
+
+#[quickcheck]
+#[ignore = "LavinMQ rejects expirations above i32::MAX; lavinmq-quirks.md #24"]
+fn expiration_up_to_ten_years_accepted(name: QueueName, exp: Expiration) -> bool {
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(async {
+        let channel = connect_channel("expiration_up_to_ten_years_accepted").await;
+        let props = exp.apply_to(BasicProperties::default());
+        publish_with_props(&channel, &name.0, props).await == exp.accepted()
+    })
+}
 
 #[quickcheck]
 fn publish_with_combined_properties(name: QueueName, args: BasicPropertiesArgs) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let channel = connect_channel("publish_with_combined_properties").await;
-        publish_with_props(&channel, &name.0, args.apply()).await
+        publish_with_props(&channel, &name.0, args.apply()).await == args.lavinmq_accepted()
     })
 }
 

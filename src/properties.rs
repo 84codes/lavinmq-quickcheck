@@ -202,6 +202,9 @@ impl Arbitrary for MessageTimestamp {
     }
 }
 
+/// RabbitMQ's largest `expiration`: 10 years in milliseconds.
+const MAX_EXPIRATION_MS: u64 = 315_360_000_000;
+
 /// `expiration` — short string parsed as a stringified integer millisecond value.
 #[derive(Clone, Debug)]
 pub struct Expiration(pub String);
@@ -210,12 +213,26 @@ impl Expiration {
     pub fn apply_to(&self, props: BasicProperties) -> BasicProperties {
         props.with_expiration(ShortString::from(self.0.clone()))
     }
+
+    /// Whether a broker should accept this expiration: a non-negative
+    /// integer of at most 10 years, as in RabbitMQ.
+    pub fn accepted(&self) -> bool {
+        self.0
+            .parse::<u64>()
+            .is_ok_and(|ms| ms <= MAX_EXPIRATION_MS)
+    }
+
+    /// Whether LavinMQ accepts it today (`lavinmq-quirks.md` #24): it
+    /// parses an `Int32`, so nothing above `i32::MAX` (~24.8 days).
+    pub fn lavinmq_accepted(&self) -> bool {
+        self.0.parse::<i32>().is_ok_and(|ms| ms >= 0)
+    }
 }
 
 impl Arbitrary for Expiration {
     fn arbitrary(g: &mut Gen) -> Self {
-        // LavinMQ parses this as an integer number of milliseconds.
-        // Generate any u32 formatted as decimal.
+        // Any u32 formatted as decimal. LavinMQ rejects the half above
+        // i32::MAX (quirk #24), so tests compare against lavinmq_accepted().
         Expiration(format!("{}", u32::arbitrary(g)))
     }
 }
@@ -283,7 +300,7 @@ impl Arbitrary for Headers {
 /// (excluding `user_id`). Each field is independently generated; no field
 /// dependencies. The `apply()` method folds all set values into a
 /// `BasicProperties` via chainable setters.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct BasicPropertiesArgs {
     pub content_type: Option<ContentType>,
     pub content_encoding: Option<ContentEncoding>,
@@ -301,6 +318,14 @@ pub struct BasicPropertiesArgs {
 }
 
 impl BasicPropertiesArgs {
+    /// Whether LavinMQ accepts a publish with these properties: only the
+    /// expiration can be rejected.
+    pub fn lavinmq_accepted(&self) -> bool {
+        self.expiration
+            .as_ref()
+            .is_none_or(Expiration::lavinmq_accepted)
+    }
+
     pub fn apply(&self) -> BasicProperties {
         let mut props = BasicProperties::default();
         if let Some(v) = &self.content_type {
@@ -363,5 +388,43 @@ impl Arbitrary for BasicPropertiesArgs {
             app_id: Option::arbitrary(g),
             cluster_id: Option::arbitrary(g),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exp(s: &str) -> Expiration {
+        Expiration(s.to_string())
+    }
+
+    #[test]
+    fn accepts_up_to_ten_years() {
+        assert!(exp("0").accepted());
+        assert!(exp("4294967295").accepted());
+        assert!(exp("315360000000").accepted());
+        assert!(!exp("315360000001").accepted());
+        assert!(!exp("-1").accepted());
+        assert!(!exp("abc").accepted());
+    }
+
+    #[test]
+    fn lavinmq_accepts_up_to_i32_max() {
+        assert!(exp("0").lavinmq_accepted());
+        assert!(exp("2147483647").lavinmq_accepted());
+        assert!(!exp("2147483648").lavinmq_accepted());
+        assert!(!exp("4294967295").lavinmq_accepted());
+        assert!(!exp("-1").lavinmq_accepted());
+    }
+
+    #[test]
+    fn args_are_accepted_unless_the_expiration_is_rejected() {
+        let mut args = BasicPropertiesArgs::default();
+        assert!(args.lavinmq_accepted());
+        args.expiration = Some(exp("2147483647"));
+        assert!(args.lavinmq_accepted());
+        args.expiration = Some(exp("2147483648"));
+        assert!(!args.lavinmq_accepted());
     }
 }

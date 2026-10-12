@@ -46,7 +46,7 @@ src/
   arguments.rs  — Arbitrary impls for individual x-* queue arguments.
   combined.rs   — Arbitrary impls for combined argument sets per queue type.
   consistent_hash.rs — Arbitrary x-consistent-hash scenarios: ring/jump, x-hash-on, weighted bind/unbind ops (weight ≤ 100), keys.
-  properties.rs — Arbitrary newtypes for BasicProperties fields (each with apply_to), plus BasicPropertiesArgs.
+  properties.rs — Arbitrary newtypes for BasicProperties fields (each with apply_to), plus BasicPropertiesArgs. Expiration::accepted() (RabbitMQ, ≤ 10 years) vs lavinmq_accepted() (≤ i32::MAX, quirk #24).
   stream_offset.rs — Arbitrary x-stream-offset (first/next/int in every AMQP int width/timestamp extremes) + expected-delivery model.
   consumer_priority.rs — Arbitrary x-priority consumer-argument values: valid (any int width within i32) and invalid (out of range / non-int).
   delayed.rs    — Arbitrary delayed-exchange scenarios (both declare styles), odd x-delay values, over-long exchange names.

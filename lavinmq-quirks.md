@@ -523,3 +523,27 @@ nothing is published here.
 **How this crate covers it:** `internal_exchange_redeclare` (in
 `src/http/exchanges.rs`) is `#[ignore]`d. `exchange_declare_parity`
 discards cases with more than one internal declaration.
+
+## 24. Expirations above `i32::MAX` are rejected
+
+**Observed:** A publish whose `expiration` is above 2147483647 ms (about
+24.8 days) is rejected as "Expiration not a number": over AMQP with
+channel close 406 PRECONDITION_FAILED, over HTTP `/publish` with 400.
+`2147483647` is accepted and `2147483648` is not. Reproduced on LavinMQ
+2.10.0.
+
+**Why:** the channel validates the property with `exp.to_i?`
+(`amqp/channel.cr`, `valid_expiration?`), and `String#to_i?` returns an
+`Int32`, so anything larger doesn't parse.
+
+**Expected:** RabbitMQ accepts any non-negative integer up to 10 years
+(315360000000 ms, `rabbit_misc:check_expiry`), and rejects negative,
+non-integer and larger values.
+
+**How this crate covers it:** `Expiration` generates any `u32`, so about
+half the values are above `i32::MAX`. `publish_with_expiration` and
+`publish_with_combined_properties` (in `src/tests.rs`) check the publish
+against `lavinmq_accepted()`; `expiration_up_to_ten_years_accepted` checks
+against `accepted()` and is `#[ignore]`d. Before publisher confirms were
+turned on in these tests, the rejected half passed unnoticed, and the
+channel close raced lapin 2's `queue.delete` into a hang (fixed in lapin 4).
