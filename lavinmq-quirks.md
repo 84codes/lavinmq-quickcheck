@@ -184,37 +184,43 @@ a 400 and is `#[ignore]`d.
 
 ## 6. Alternate exchanges fire per routing pass, not per exchange
 
-**Observed:** LavinMQ hands a message to an exchange's alternate exchange
-only if the **whole routing pass** has found no queue yet when that
-exchange finishes walking its bindings. Bindings are walked in insertion
-order, so the outcome depends on binding order. Reproduced on LavinMQ
-2.10.0.
+**Fixed in:** [cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
+LavinMQ now follows RabbitMQ: an exchange uses its alternate exchange
+iff none of its own bindings match, and `simulate` models that.
 
-Two cases where this differs from RabbitMQ:
+**Observed (before the fix):** LavinMQ handed a message to an exchange's
+alternate exchange only if the **whole routing pass** had found no queue
+yet when that exchange finished walking its bindings. Bindings are walked
+in insertion order, so the outcome depended on binding order. Reproduced
+on LavinMQ 2.10.0.
+
+Two cases where this differed from RabbitMQ:
 
 1. **Sibling order.** `e0` is bound to `q0` and to `e1`. `e1` has no
    bindings and an AE leading to `q1`. If `e0 → q0` was bound first,
-   `q0` is already found when `e1` is visited, so `e1`'s AE is skipped
-   and only `q0` gets the message. If `e0 → e1` was bound first, the AE
-   fires and both get it. RabbitMQ fires `e1`'s AE either way.
+   `q0` was already found when `e1` was visited, so `e1`'s AE was
+   skipped and only `q0` got the message. If `e0 → e1` was bound first,
+   the AE fired and both got it. RabbitMQ fires `e1`'s AE either way.
 2. **Exchange-to-exchange bindings.** `e0` (AE → `e2` → `q0`) is bound
-   only to `e1`, which has no bindings. LavinMQ finds no queue, so
-   `e0`'s AE fires and `q0` gets the message. RabbitMQ counts `e1` as a
+   only to `e1`, which has no bindings. LavinMQ found no queue, so
+   `e0`'s AE fired and `q0` got the message. RabbitMQ counts `e1` as a
    destination of `e0`, so `e0`'s AE does not fire.
 
-**Why:** `Exchange#find_queues` shares one `queues` set across the pass
-(including exchange-to-exchange hops) and checks
+**Why:** `Exchange#find_queues` shared one `queues` set across the pass
+(including exchange-to-exchange hops) and checked
 `if queues.empty? && (ae_name = alternate_exchange)` after its own
 bindings. RabbitMQ's `process_alternate` only looks at what that
 exchange's own `route` returned, where exchange destinations count.
 
 **How this crate models it:** `simulate` in `src/routing.rs` walks
-bindings depth-first in insertion order, and fires an AE iff the pass's
-found-queue list is still empty. The generator shuffles binding order so
-both sibling orders get exercised. The unit tests
-`sub_exchange_ae_skipped_when_sibling_found_a_queue_first`,
-`sub_exchange_ae_fires_when_visited_before_sibling_queue` and
-`ae_fires_when_e2e_subtree_reaches_no_queue` pin the behaviour down.
+bindings depth-first in insertion order, and fires an exchange's AE iff
+that exchange has no bindings (all exchanges are fanouts). The unit
+tests `sub_exchange_ae_fires_after_sibling_found_a_queue`,
+`sub_exchange_ae_fires_when_visited_before_sibling_queue`,
+`ae_unused_when_e2e_subtree_reaches_no_queue` and
+`ae_unused_when_e2e_target_was_already_visited` pin the behaviour down.
+`routing_graph_delivers_expected` fails against LavinMQ versions without
+the fix whenever it generates one of the cases above.
 
 ## 7. Consistent-hash exchange with `x-algorithm` stops routing after any policy change
 
@@ -240,6 +246,11 @@ happens. `consistent_hash_survives_policy_change` reproduces the bug on
 purpose and is `#[ignore]`d until it's fixed.
 
 **Upstream:** [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300)
+
+**Fixed in:** [cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
+`consistent_hash_survives_policy_change` passes against a build with it.
+It stays `#[ignore]`d until a LavinMQ release has the fix, since the
+release workflow smoke-tests against `cloudamqp/lavinmq:latest`.
 
 ## 8. Headers exchange matching
 

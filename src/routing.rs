@@ -79,10 +79,12 @@ use std::collections::{HashMap, HashSet};
 ///
 /// Within one routing pass each exchange and each queue is visited at
 /// most once, so loops and diamond paths deliver one copy. Bindings are
-/// walked in insertion order. After walking its own bindings, an exchange
-/// hands the message to its alternate exchange iff the *whole pass* has
-/// found no queue yet (LavinMQ semantics; RabbitMQ instead fires an AE iff
-/// that exchange has no matching bindings). See `lavinmq-quirks.md`.
+/// walked in insertion order. An exchange hands the message to its
+/// alternate exchange iff none of its own bindings match, as in RabbitMQ.
+/// All exchanges here are fanouts, so that means it has no bindings; an
+/// exchange-to-exchange binding counts even if that exchange routes
+/// nowhere. LavinMQ before cloudamqp/lavinmq#2376 decided per routing
+/// pass instead; see `lavinmq-quirks.md` #6.
 ///
 /// Dead-letter transitions start a fresh pass at the DLX, so they can
 /// reach exchanges and queues the original pass already visited.
@@ -117,20 +119,23 @@ fn visit_exchange(
     if !visited.insert(ex) {
         return;
     }
+    let mut matched = false;
     for b in &topo.bindings {
         match *b {
-            Binding::ExchangeToQueue { src, dst } if src == ex && !found.contains(&dst) => {
-                found.push(dst);
+            Binding::ExchangeToQueue { src, dst } if src == ex => {
+                matched = true;
+                if !found.contains(&dst) {
+                    found.push(dst);
+                }
             }
             Binding::ExchangeToExchange { src, dst } if src == ex => {
+                matched = true;
                 visit_exchange(topo, dst, visited, found);
             }
             _ => {}
         }
     }
-    if found.is_empty()
-        && let Some(ae) = topo.exchanges[ex].ae
-    {
+    if !matched && let Some(ae) = topo.exchanges[ex].ae {
         visit_exchange(topo, ae.target, visited, found);
     }
 }
@@ -287,17 +292,17 @@ mod simulator_tests {
         assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
     }
 
-    // LavinMQ fires an exchange's AE only if the whole pass has found no
-    // queue yet, so sibling binding order decides (RabbitMQ: always fires).
+    // An exchange's AE depends only on its own bindings, so sibling
+    // binding order doesn't matter (LavinMQ before #2376: it did).
     #[test]
-    fn sub_exchange_ae_skipped_when_sibling_found_a_queue_first() {
+    fn sub_exchange_ae_fires_after_sibling_found_a_queue() {
         // e0 → q0, then e0 → e1; e1 has no bindings, AE → e2 → q1.
         let topo = Topology {
             exchanges: vec![ex("e0"), ex_ae("e1", 2), ex("e2")],
             queues: vec![q_ack("q0"), q_ack("q1")],
             bindings: vec![e2q(0, 0), e2e(0, 1), e2q(2, 1)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
     }
 
     #[test]
@@ -311,16 +316,34 @@ mod simulator_tests {
         assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
     }
 
-    // LavinMQ: an e2e binding whose subtree reaches no queue still leaves
-    // the pass empty, so the AE fires (RabbitMQ: the binding counts as a
-    // route and the AE does not fire).
+    // An e2e binding counts as a match even if its subtree reaches no
+    // queue, so the AE doesn't fire (LavinMQ before #2376: it did).
     #[test]
-    fn ae_fires_when_e2e_subtree_reaches_no_queue() {
+    fn ae_unused_when_e2e_subtree_reaches_no_queue() {
         // e0 (AE → e2) → e1, e1 has no bindings.
         let topo = Topology {
             exchanges: vec![ex_ae("e0", 2), ex("e1"), ex("e2")],
             queues: vec![q_ack("q0")],
             bindings: vec![e2e(0, 1), e2q(2, 0)],
+        };
+        assert_eq!(simulate(&topo), HashMap::new());
+    }
+
+    // A binding to an exchange already visited in this pass still matches.
+    #[test]
+    fn ae_unused_when_e2e_target_was_already_visited() {
+        // e0 → e1 → e3 → q0 and e0 → e2 → e3; e2 has AE → e4 → q1.
+        let topo = Topology {
+            exchanges: vec![ex("e0"), ex("e1"), ex_ae("e2", 4), ex("e3"), ex("e4")],
+            queues: vec![q_ack("q0"), q_ack("q1")],
+            bindings: vec![
+                e2e(0, 1),
+                e2e(0, 2),
+                e2e(1, 3),
+                e2e(2, 3),
+                e2q(3, 0),
+                e2q(4, 1),
+            ],
         };
         assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
     }
