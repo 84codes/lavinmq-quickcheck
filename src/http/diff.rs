@@ -14,8 +14,10 @@ pub enum Outcome {
 pub fn amqp_outcome<T>(result: Result<T, lapin::Error>) -> Outcome {
     match result {
         Ok(_) => Outcome::Ok,
-        Err(lapin::Error::ProtocolError(e)) => Outcome::Err(e.get_id()),
-        Err(e) => panic!("non-protocol AMQP error: {e:?}"),
+        Err(e) => match e.kind() {
+            lapin::ErrorKind::ProtocolError(e) => Outcome::Err(e.get_id()),
+            _ => panic!("non-protocol AMQP error: {e:?}"),
+        },
     }
 }
 

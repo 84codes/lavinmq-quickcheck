@@ -224,18 +224,39 @@ impl BindingScenario {
         );
         match (op, b.dest) {
             (BindOp::Bind(_), Dest::Exchange) => amqp_outcome(
-                ch.exchange_bind(dst, src, rk, ExchangeBindOptions::default(), args)
-                    .await,
+                ch.exchange_bind(
+                    dst.into(),
+                    src.into(),
+                    rk.into(),
+                    ExchangeBindOptions::default(),
+                    args,
+                )
+                .await,
             ),
             (BindOp::Bind(_), _) => amqp_outcome(
-                ch.queue_bind(dst, src, rk, QueueBindOptions::default(), args)
-                    .await,
+                ch.queue_bind(
+                    dst.into(),
+                    src.into(),
+                    rk.into(),
+                    QueueBindOptions::default(),
+                    args,
+                )
+                .await,
             ),
             (BindOp::Unbind(_), Dest::Exchange) => amqp_outcome(
-                ch.exchange_unbind(dst, src, rk, ExchangeUnbindOptions::default(), args)
+                ch.exchange_unbind(
+                    dst.into(),
+                    src.into(),
+                    rk.into(),
+                    ExchangeUnbindOptions::default(),
+                    args,
+                )
+                .await,
+            ),
+            (BindOp::Unbind(_), _) => amqp_outcome(
+                ch.queue_unbind(dst.into(), src.into(), rk.into(), args)
                     .await,
             ),
-            (BindOp::Unbind(_), _) => amqp_outcome(ch.queue_unbind(dst, src, rk, args).await),
         }
     }
 }
@@ -284,7 +305,7 @@ fn binding_parity(s: BindingScenario) -> TestResult {
 
     s.teardown(&amqp_vhost);
     s.teardown(&http_vhost);
-    let _ = rt.block_on(conn.close(200, "bye"));
+    let _ = rt.block_on(conn.close(200, "bye".into()));
     TestResult::from_bool(ok)
 }
 

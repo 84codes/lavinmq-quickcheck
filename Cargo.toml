@@ -5,7 +5,7 @@ edition = "2024"
 
 [dependencies]
 quickcheck = "1"
-lapin = "2"
+lapin = "4"
 
 [dev-dependencies]
 quickcheck_macros = "1"

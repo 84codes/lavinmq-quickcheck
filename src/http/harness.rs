@@ -63,6 +63,6 @@ pub fn declare_parity<D: Debug, T>(
 
     let _ = client::delete(&path(&amqp_vhost));
     let _ = client::delete(&path(&http_vhost));
-    let _ = rt.block_on(conn.close(200, "bye"));
+    let _ = rt.block_on(conn.close(200, "bye".into()));
     TestResult::from_bool(ok)
 }

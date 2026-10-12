@@ -8,9 +8,8 @@ use crate::names::{QueueName, RoutingKey};
 use crate::properties::BasicPropertiesArgs;
 use crate::tests::{connect, test_vhost};
 use lapin::{
-    BasicProperties,
+    BasicProperties, Confirmation,
     options::{BasicGetOptions, BasicPublishOptions, ConfirmSelectOptions},
-    publisher_confirm::Confirmation,
 };
 use quickcheck::{Arbitrary, Gen, TestResult};
 use quickcheck_macros::quickcheck;
@@ -99,8 +98,8 @@ impl Message {
         };
         let confirm = async {
             ch.basic_publish(
-                &self.exchange,
-                &self.routing_key,
+                self.exchange.as_str().into(),
+                self.routing_key.as_str().into(),
                 opts,
                 &self.payload,
                 props,
@@ -113,8 +112,10 @@ impl Message {
                 c,
                 Confirmation::Ack(Some(_)) | Confirmation::Nack(Some(_))
             )),
-            Err(lapin::Error::ProtocolError(e)) => Err(e.get_id()),
-            Err(e) => panic!("non-protocol AMQP error: {e:?}"),
+            Err(e) => match e.kind() {
+                lapin::ErrorKind::ProtocolError(e) => Err(e.get_id()),
+                _ => panic!("non-protocol AMQP error: {e:?}"),
+            },
         }
     }
 
@@ -185,7 +186,7 @@ fn publish_parity(m: Message) -> TestResult {
         let conn = connect("publish_parity-amqp").await;
         let ch = conn.create_channel().await.unwrap();
         let routed = m.publish_amqp(&ch, props).await;
-        let _ = conn.close(200, "bye").await;
+        let _ = conn.close(200, "bye".into()).await;
         routed
     });
     let http_routed = m.publish_http(&http_vhost, &json_props);
@@ -229,7 +230,7 @@ fn get_parity(m: Message) -> TestResult {
             return None;
         }
         let got = ch
-            .basic_get(queues[0], BasicGetOptions { no_ack: true })
+            .basic_get(queues[0].into(), BasicGetOptions { no_ack: true })
             .await
             .unwrap()
             .map(|g| {
@@ -244,7 +245,7 @@ fn get_parity(m: Message) -> TestResult {
                     "payload_encoding": "base64",
                 })
             });
-        let _ = conn.close(200, "bye").await;
+        let _ = conn.close(200, "bye".into()).await;
         Some(got)
     });
     let Some(amqp_msg) = amqp_msg else {
@@ -307,8 +308,8 @@ fn large_timestamp_round_trips(t: u64) -> bool {
             .await
             .unwrap();
         ch.basic_publish(
-            "",
-            "q",
+            "".into(),
+            "q".into(),
             BasicPublishOptions::default(),
             b"",
             BasicProperties::default().with_timestamp(t),
@@ -317,7 +318,7 @@ fn large_timestamp_round_trips(t: u64) -> bool {
         .unwrap()
         .await
         .unwrap();
-        let _ = conn.close(200, "bye").await;
+        let _ = conn.close(200, "bye".into()).await;
     });
     let via_amqp = get_http_raw(&vhost, "q").unwrap()["properties"]["timestamp"] == json!(t);
     let via_http = publish_http_to_q(&vhost, &json!({"timestamp": t}), b"").is_ok();

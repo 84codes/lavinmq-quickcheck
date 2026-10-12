@@ -97,7 +97,7 @@ async fn declare(ch: &lapin::Channel, name: &str, d: &ExchangeDecl) -> lapin::Re
         ..ExchangeDeclareOptions::default()
     };
     ch.exchange_declare(
-        name,
+        name.into(),
         ExchangeKind::Custom(d.kind.clone()),
         opts,
         d.arguments.clone(),

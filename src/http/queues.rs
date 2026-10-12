@@ -52,7 +52,8 @@ fn queue_declare_parity(name: QueueName, decls: Vec<QueueDecl>) -> TestResult {
                 durable: d.durable,
                 ..QueueDeclareOptions::default()
             };
-            ch.queue_declare(&name.0, opts, d.arguments.clone()).await
+            ch.queue_declare(name.0.as_str().into(), opts, d.arguments.clone())
+                .await
         },
         |d| {
             Some(json!({
@@ -77,9 +78,13 @@ fn reserved_prefix_parity(name: QueueName) -> bool {
         let conn = connect(amqp_vhost).await;
         let ch = conn.create_channel().await.unwrap();
         let r = ch
-            .queue_declare(&name, QueueDeclareOptions::default(), FieldTable::default())
+            .queue_declare(
+                name.as_str().into(),
+                QueueDeclareOptions::default(),
+                FieldTable::default(),
+            )
             .await;
-        let _ = conn.close(200, "bye").await;
+        let _ = conn.close(200, "bye".into()).await;
         amqp_outcome(r)
     });
     let http = client::put(&queue_path(&http_vhost, &name), &json!({}));

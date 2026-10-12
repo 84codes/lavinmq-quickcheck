@@ -68,12 +68,12 @@ fn stream_queue_opts() -> QueueDeclareOptions {
 
 async fn declare_classic_ok(channel: &lapin::Channel, name: &str, args: FieldTable) -> bool {
     let res = channel
-        .queue_declare(name, classic_queue_opts(), args)
+        .queue_declare(name.into(), classic_queue_opts(), args)
         .await
         .is_ok();
     // Cleanup (best-effort; ignore errors — channel may already be closed on failure).
     let _ = channel
-        .queue_delete(name, QueueDeleteOptions::default())
+        .queue_delete(name.into(), QueueDeleteOptions::default())
         .await;
     res
 }
@@ -84,11 +84,11 @@ async fn declare_stream_ok(channel: &lapin::Channel, name: &str, mut args: Field
         lapin::types::AMQPValue::LongString("stream".into()),
     );
     let res = channel
-        .queue_declare(name, stream_queue_opts(), args)
+        .queue_declare(name.into(), stream_queue_opts(), args)
         .await
         .is_ok();
     let _ = channel
-        .queue_delete(name, QueueDeleteOptions::default())
+        .queue_delete(name.into(), QueueDeleteOptions::default())
         .await;
     res
 }
@@ -107,11 +107,14 @@ async fn declare_stream_rejects(
         lapin::types::ShortString::from("x-queue-type"),
         lapin::types::AMQPValue::LongString("stream".into()),
     );
-    match channel.queue_declare(name, stream_queue_opts(), args).await {
+    match channel
+        .queue_declare(name.into(), stream_queue_opts(), args)
+        .await
+    {
         Ok(_) => {
             // Unexpected success — clean up so we don't leak.
             let _ = channel
-                .queue_delete(name, QueueDeleteOptions::default())
+                .queue_delete(name.into(), QueueDeleteOptions::default())
                 .await;
             false
         }
@@ -133,14 +136,14 @@ fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
             ..QueueDeclareOptions::default()
         };
         channel
-            .queue_declare(&name.0, queue_opts, FieldTable::default())
+            .queue_declare(name.0.as_str().into(), queue_opts, FieldTable::default())
             .await
             .expect("Failed to declare queue");
 
         channel
             .basic_publish(
-                "",
-                &name.0,
+                "".into(),
+                name.0.as_str().into(),
                 BasicPublishOptions::default(),
                 &payload,
                 BasicProperties::default(),
@@ -152,8 +155,8 @@ fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
 
         let mut consumer = channel
             .basic_consume(
-                &name.0,
-                "test-consumer",
+                name.0.as_str().into(),
+                "test-consumer".into(),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
             )
@@ -174,7 +177,7 @@ fn round_trip(name: QueueName, payload: Vec<u8>) -> bool {
         let matches = delivery.data == payload;
 
         channel
-            .queue_delete(&name.0, QueueDeleteOptions::default())
+            .queue_delete(name.0.as_str().into(), QueueDeleteOptions::default())
             .await
             .expect("Failed to delete queue");
 
@@ -193,16 +196,16 @@ fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool
             ..QueueDeclareOptions::default()
         };
         let queue = channel
-            .queue_declare("", queue_opts, FieldTable::default())
+            .queue_declare("".into(), queue_opts, FieldTable::default())
             .await
             .expect("Failed to declare queue");
         let queue_name = queue.name().as_str();
 
         channel
             .queue_bind(
-                queue_name,
-                "amq.direct",
-                &routing_key.0,
+                queue_name.into(),
+                "amq.direct".into(),
+                routing_key.0.as_str().into(),
                 QueueBindOptions::default(),
                 FieldTable::default(),
             )
@@ -211,8 +214,8 @@ fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool
 
         channel
             .basic_publish(
-                "amq.direct",
-                &routing_key.0,
+                "amq.direct".into(),
+                routing_key.0.as_str().into(),
                 BasicPublishOptions::default(),
                 &payload,
                 BasicProperties::default(),
@@ -224,8 +227,8 @@ fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool
 
         let mut consumer = channel
             .basic_consume(
-                queue_name,
-                "test-consumer",
+                queue_name.into(),
+                "test-consumer".into(),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
             )
@@ -246,7 +249,7 @@ fn direct_exchange_round_trip(routing_key: RoutingKey, payload: Vec<u8>) -> bool
         let matches = delivery.data == payload;
 
         channel
-            .queue_delete(queue_name, QueueDeleteOptions::default())
+            .queue_delete(queue_name.into(), QueueDeleteOptions::default())
             .await
             .expect("Failed to delete queue");
 
@@ -265,16 +268,16 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
             ..QueueDeclareOptions::default()
         };
         let queue = channel
-            .queue_declare("", queue_opts, FieldTable::default())
+            .queue_declare("".into(), queue_opts, FieldTable::default())
             .await
             .expect("Failed to declare queue");
         let queue_name = queue.name().as_str();
 
         channel
             .queue_bind(
-                queue_name,
-                "amq.topic",
-                &topic.binding_pattern,
+                queue_name.into(),
+                "amq.topic".into(),
+                topic.binding_pattern.as_str().into(),
                 QueueBindOptions::default(),
                 FieldTable::default(),
             )
@@ -283,8 +286,8 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
 
         channel
             .basic_publish(
-                "amq.topic",
-                &topic.routing_key,
+                "amq.topic".into(),
+                topic.routing_key.as_str().into(),
                 BasicPublishOptions::default(),
                 &payload,
                 BasicProperties::default(),
@@ -296,8 +299,8 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
 
         let mut consumer = channel
             .basic_consume(
-                queue_name,
-                "test-consumer",
+                queue_name.into(),
+                "test-consumer".into(),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
             )
@@ -318,7 +321,7 @@ fn topic_exchange_round_trip(topic: TopicRoutingKey, payload: Vec<u8>) -> bool {
         let matches = delivery.data == payload;
 
         channel
-            .queue_delete(queue_name, QueueDeleteOptions::default())
+            .queue_delete(queue_name.into(), QueueDeleteOptions::default())
             .await
             .expect("Failed to delete queue");
 
@@ -341,15 +344,15 @@ fn topic_trailing_empty_word_routes(topic: TopicRoutingKey) -> bool {
             .await
             .expect("Failed to enable confirms");
         let queue = channel
-            .queue_declare("", classic_queue_opts(), FieldTable::default())
+            .queue_declare("".into(), classic_queue_opts(), FieldTable::default())
             .await
             .expect("Failed to declare queue");
         let queue_name = queue.name().as_str();
         channel
             .queue_bind(
-                queue_name,
-                "amq.topic",
-                &key,
+                queue_name.into(),
+                "amq.topic".into(),
+                key.as_str().into(),
                 QueueBindOptions::default(),
                 FieldTable::default(),
             )
@@ -357,8 +360,8 @@ fn topic_trailing_empty_word_routes(topic: TopicRoutingKey) -> bool {
             .expect("Failed to bind queue");
         channel
             .basic_publish(
-                "amq.topic",
-                &key,
+                "amq.topic".into(),
+                key.as_str().into(),
                 BasicPublishOptions::default(),
                 b"x",
                 BasicProperties::default(),
@@ -369,11 +372,11 @@ fn topic_trailing_empty_word_routes(topic: TopicRoutingKey) -> bool {
             .expect("Failed to confirm publish");
         // Confirmed, so it's in the queue now if it was routed at all.
         let got = channel
-            .basic_get(queue_name, BasicGetOptions { no_ack: true })
+            .basic_get(queue_name.into(), BasicGetOptions { no_ack: true })
             .await
             .expect("Failed to get");
         let _ = channel
-            .queue_delete(queue_name, QueueDeleteOptions::default())
+            .queue_delete(queue_name.into(), QueueDeleteOptions::default())
             .await;
         got.is_some()
     })
@@ -489,11 +492,11 @@ fn declare_stream_with_combined_args(name: QueueName, args: StreamQueueArgs) -> 
         let mut table = FieldTable::default();
         args.apply(&mut table);
         let ok = channel
-            .queue_declare(&name.0, stream_queue_opts(), table)
+            .queue_declare(name.0.as_str().into(), stream_queue_opts(), table)
             .await
             .is_ok();
         let _ = channel
-            .queue_delete(&name.0, QueueDeleteOptions::default())
+            .queue_delete(name.0.as_str().into(), QueueDeleteOptions::default())
             .await;
         ok
     })
@@ -529,7 +532,7 @@ stream_rejection_test!(stream_rejects_max_priority, MaxPriority);
 async fn declare_fanout(channel: &lapin::Channel, name: &str, args: FieldTable) {
     channel
         .exchange_declare(
-            name,
+            name.into(),
             ExchangeKind::Fanout,
             ExchangeDeclareOptions::default(),
             args,
@@ -540,7 +543,7 @@ async fn declare_fanout(channel: &lapin::Channel, name: &str, args: FieldTable) 
 
 async fn declare_queue_for_routing(channel: &lapin::Channel, name: &str, args: FieldTable) {
     channel
-        .queue_declare(name, QueueDeclareOptions::default(), args)
+        .queue_declare(name.into(), QueueDeclareOptions::default(), args)
         .await
         .expect("Failed to declare queue");
 }
@@ -550,9 +553,9 @@ async fn apply_binding(channel: &lapin::Channel, topo: &Topology, b: &Binding) {
         Binding::ExchangeToExchange { src, dst } => {
             channel
                 .exchange_bind(
-                    &topo.exchanges[dst].name, // destination
-                    &topo.exchanges[src].name, // source
-                    "",
+                    topo.exchanges[dst].name.as_str().into(), // destination
+                    topo.exchanges[src].name.as_str().into(), // source
+                    "".into(),
                     ExchangeBindOptions::default(),
                     FieldTable::default(),
                 )
@@ -562,9 +565,9 @@ async fn apply_binding(channel: &lapin::Channel, topo: &Topology, b: &Binding) {
         Binding::ExchangeToQueue { src, dst } => {
             channel
                 .queue_bind(
-                    &topo.queues[dst].name,
-                    &topo.exchanges[src].name,
-                    "",
+                    topo.queues[dst].name.as_str().into(),
+                    topo.exchanges[src].name.as_str().into(),
+                    "".into(),
                     QueueBindOptions::default(),
                     FieldTable::default(),
                 )
@@ -583,8 +586,8 @@ async fn apply_binding(channel: &lapin::Channel, topo: &Topology, b: &Binding) {
 async fn spawn_consumer(channel: &lapin::Channel, queue: &QueueNode, counter: Arc<AtomicU32>) {
     let mut consumer = channel
         .basic_consume(
-            &queue.name,
-            &format!("consumer_{}", queue.name),
+            queue.name.as_str().into(),
+            format!("consumer_{}", queue.name).into(),
             BasicConsumeOptions::default(),
             FieldTable::default(),
         )
@@ -618,8 +621,8 @@ async fn spawn_consumer(channel: &lapin::Channel, queue: &QueueNode, counter: Ar
 async fn publish_probe(channel: &lapin::Channel, exchange: &str) {
     channel
         .basic_publish(
-            exchange,
-            "",
+            exchange.into(),
+            "".into(),
             BasicPublishOptions::default(),
             b"probe",
             BasicProperties::default(),
@@ -653,12 +656,12 @@ async fn wait_for_total(counters: &[Arc<AtomicU32>], expected_total: u32, timeou
 async fn cleanup_topology(channel: &lapin::Channel, topo: &Topology) {
     for q in &topo.queues {
         let _ = channel
-            .queue_delete(&q.name, QueueDeleteOptions::default())
+            .queue_delete(q.name.as_str().into(), QueueDeleteOptions::default())
             .await;
     }
     for ex in &topo.exchanges {
         let _ = channel
-            .exchange_delete(&ex.name, ExchangeDeleteOptions::default())
+            .exchange_delete(ex.name.as_str().into(), ExchangeDeleteOptions::default())
             .await;
     }
 }
@@ -744,21 +747,27 @@ use crate::properties::{
 
 async fn publish_with_props(channel: &lapin::Channel, name: &str, props: BasicProperties) -> bool {
     let declared = channel
-        .queue_declare(name, classic_queue_opts(), FieldTable::default())
+        .queue_declare(name.into(), classic_queue_opts(), FieldTable::default())
         .await
         .is_ok();
     if !declared {
         return false;
     }
     let res = channel
-        .basic_publish("", name, BasicPublishOptions::default(), b"", props)
+        .basic_publish(
+            "".into(),
+            name.into(),
+            BasicPublishOptions::default(),
+            b"",
+            props,
+        )
         .await;
     let ok = match res {
         Ok(confirm) => confirm.await.is_ok(),
         Err(_) => false,
     };
     let _ = channel
-        .queue_delete(name, QueueDeleteOptions::default())
+        .queue_delete(name.into(), QueueDeleteOptions::default())
         .await;
     ok
 }
@@ -813,7 +822,7 @@ async fn setup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScena
     s.hash_on.insert_into(&mut args);
     channel
         .exchange_declare(
-            &s.exchange,
+            s.exchange.as_str().into(),
             ExchangeKind::Custom("x-consistent-hash".into()),
             ExchangeDeclareOptions::default(),
             args,
@@ -829,16 +838,21 @@ async fn setup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScena
         match op {
             BindOp::Bind { .. } => channel
                 .queue_bind(
-                    queue,
-                    &s.exchange,
-                    &rk,
+                    queue.as_str().into(),
+                    s.exchange.as_str().into(),
+                    rk.as_str().into(),
                     QueueBindOptions::default(),
                     FieldTable::default(),
                 )
                 .await
                 .expect("Failed to bind"),
             BindOp::Unbind { .. } => channel
-                .queue_unbind(queue, &s.exchange, &rk, FieldTable::default())
+                .queue_unbind(
+                    queue.as_str().into(),
+                    s.exchange.as_str().into(),
+                    rk.as_str().into(),
+                    FieldTable::default(),
+                )
                 .await
                 .expect("Failed to unbind"),
         }
@@ -851,7 +865,7 @@ async fn drain_hits(channel: &lapin::Channel, s: &ConsistentHashScenario) -> Vec
     let mut hits = vec![[Vec::new(), Vec::new()]; s.keys.len()];
     for (qi, q) in s.queues.iter().enumerate() {
         while let Some(msg) = channel
-            .basic_get(q, BasicGetOptions { no_ack: true })
+            .basic_get(q.as_str().into(), BasicGetOptions { no_ack: true })
             .await
             .expect("Failed to basic_get")
         {
@@ -865,10 +879,12 @@ async fn drain_hits(channel: &lapin::Channel, s: &ConsistentHashScenario) -> Vec
 
 async fn cleanup_consistent_hash(channel: &lapin::Channel, s: &ConsistentHashScenario) {
     for q in &s.queues {
-        let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
+        let _ = channel
+            .queue_delete(q.as_str().into(), QueueDeleteOptions::default())
+            .await;
     }
     let _ = channel
-        .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
+        .exchange_delete(s.exchange.as_str().into(), ExchangeDeleteOptions::default())
         .await;
 }
 
@@ -897,8 +913,8 @@ fn consistent_hash_is_deterministic(s: ConsistentHashScenario) -> bool {
             for copy in 0..2 {
                 channel
                     .basic_publish(
-                        &s.exchange,
-                        &key.routing_key,
+                        s.exchange.as_str().into(),
+                        key.routing_key.as_str().into(),
                         BasicPublishOptions::default(),
                         format!("{i}:{copy}").as_bytes(),
                         props.clone(),
@@ -928,8 +944,8 @@ const SENTINEL: &[u8] = b"sentinel";
 async fn publish_confirmed(channel: &lapin::Channel, queue: &str, payload: &[u8]) {
     channel
         .basic_publish(
-            "",
-            queue,
+            "".into(),
+            queue.into(),
             BasicPublishOptions::default(),
             payload,
             BasicProperties::default(),
@@ -979,7 +995,7 @@ fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
             AMQPValue::LongString("stream".into()),
         );
         channel
-            .queue_declare(&s.stream, stream_queue_opts(), args)
+            .queue_declare(s.stream.as_str().into(), stream_queue_opts(), args)
             .await
             .expect("Failed to declare stream");
 
@@ -991,8 +1007,8 @@ fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
         consume_args.insert(ShortString::from("x-stream-offset"), s.offset.to_amqp());
         let mut consumer = channel
             .basic_consume(
-                &s.stream,
-                &format!("{}-consumer", s.stream),
+                s.stream.as_str().into(),
+                format!("{}-consumer", s.stream).into(),
                 BasicConsumeOptions::default(),
                 consume_args,
             )
@@ -1011,7 +1027,7 @@ fn stream_offset_delivers_expected(s: StreamOffsetScenario) -> bool {
         .expect("Timed out waiting for sentinel");
 
         let _ = channel
-            .queue_delete(&s.stream, QueueDeleteOptions::default())
+            .queue_delete(s.stream.as_str().into(), QueueDeleteOptions::default())
             .await;
         seen == expected
     })
@@ -1030,15 +1046,20 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
         let channel = connect_channel("odd_x_delay_delivers_immediately").await;
         let (kind, args) = declare_args(s.style, s.ty);
         channel
-            .exchange_declare(&s.exchange, kind, ExchangeDeclareOptions::default(), args)
+            .exchange_declare(
+                s.exchange.as_str().into(),
+                kind,
+                ExchangeDeclareOptions::default(),
+                args,
+            )
             .await
             .expect("Failed to declare delayed exchange");
         declare_queue_for_routing(&channel, &s.queue, FieldTable::default()).await;
         channel
             .queue_bind(
-                &s.queue,
-                &s.exchange,
-                &s.routing_key,
+                s.queue.as_str().into(),
+                s.exchange.as_str().into(),
+                s.routing_key.as_str().into(),
                 QueueBindOptions::default(),
                 FieldTable::default(),
             )
@@ -1049,8 +1070,8 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
         headers.insert(ShortString::from("x-delay"), s.delay.0.clone());
         channel
             .basic_publish(
-                &s.exchange,
-                &s.routing_key,
+                s.exchange.as_str().into(),
+                s.routing_key.as_str().into(),
                 BasicPublishOptions::default(),
                 b"delayed",
                 BasicProperties::default().with_headers(headers),
@@ -1060,8 +1081,8 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
 
         let mut consumer = channel
             .basic_consume(
-                &s.queue,
-                "delayed-consumer",
+                s.queue.as_str().into(),
+                "delayed-consumer".into(),
                 BasicConsumeOptions {
                     no_ack: true,
                     ..BasicConsumeOptions::default()
@@ -1075,10 +1096,10 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
             .is_ok_and(|d| d.is_some_and(|d| d.is_ok_and(|d| d.data == b"delayed")));
 
         let _ = channel
-            .queue_delete(&s.queue, QueueDeleteOptions::default())
+            .queue_delete(s.queue.as_str().into(), QueueDeleteOptions::default())
             .await;
         let _ = channel
-            .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
+            .exchange_delete(s.exchange.as_str().into(), ExchangeDeleteOptions::default())
             .await;
         arrived
     })
@@ -1103,11 +1124,16 @@ fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
             crate::delayed::DelayedType::Direct,
         );
         let declared = channel
-            .exchange_declare(&name.0, kind, ExchangeDeclareOptions::default(), args)
+            .exchange_declare(
+                name.0.as_str().into(),
+                kind,
+                ExchangeDeclareOptions::default(),
+                args,
+            )
             .await;
         if declared.is_ok() {
             let _ = channel
-                .exchange_delete(&name.0, ExchangeDeleteOptions::default())
+                .exchange_delete(name.0.as_str().into(), ExchangeDeleteOptions::default())
                 .await;
             return false;
         }
@@ -1116,7 +1142,7 @@ fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
         };
         probe
             .exchange_declare(
-                "amq.direct",
+                "amq.direct".into(),
                 ExchangeKind::Direct,
                 ExchangeDeclareOptions {
                     passive: true,
@@ -1134,15 +1160,15 @@ fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
 // ---------------------------------------------------------------------------
 
 use crate::alternate::{AeCycle, MissingAe};
-use lapin::publisher_confirm::Confirmation;
+use lapin::Confirmation;
 
 /// Publishes a mandatory message (confirms on) and returns the reply code
 /// of the basic.return, or `None` if the message was routed.
 async fn publish_mandatory(channel: &lapin::Channel, exchange: &str) -> Option<u16> {
     let confirm = channel
         .basic_publish(
-            exchange,
-            "",
+            exchange.into(),
+            "".into(),
             BasicPublishOptions {
                 mandatory: true,
                 ..BasicPublishOptions::default()
@@ -1187,7 +1213,7 @@ fn ae_cycle_terminates_and_returns(c: AeCycle) -> bool {
         .await;
         for (name, _) in &c.exchanges {
             let _ = channel
-                .exchange_delete(name, ExchangeDeleteOptions::default())
+                .exchange_delete(name.as_str().into(), ExchangeDeleteOptions::default())
                 .await;
         }
         matches!(code, Ok(Some(312)))
@@ -1206,7 +1232,7 @@ fn missing_ae_returns_mandatory(m: MissingAe) -> bool {
         declare_with_ae(&channel, &m.exchange, &m.missing, m.spelling.key()).await;
         let code = publish_mandatory(&channel, &m.exchange).await;
         let _ = channel
-            .exchange_delete(&m.exchange, ExchangeDeleteOptions::default())
+            .exchange_delete(m.exchange.as_str().into(), ExchangeDeleteOptions::default())
             .await;
         code == Some(312)
     })
@@ -1256,7 +1282,7 @@ async fn wait_for_policy(vhost: &str, exchange: &str, policy: &str) -> bool {
 async fn queue_len(channel: &lapin::Channel, queue: &str) -> usize {
     let mut n = 0;
     while channel
-        .basic_get(queue, BasicGetOptions { no_ack: true })
+        .basic_get(queue.into(), BasicGetOptions { no_ack: true })
         .await
         .expect("Failed to basic_get")
         .is_some()
@@ -1280,9 +1306,9 @@ fn ae_argument_beats_policy(p: PolicyAe) -> bool {
             declare_queue_for_routing(&channel, q, FieldTable::default()).await;
             channel
                 .queue_bind(
-                    q,
-                    ex,
-                    "",
+                    q.as_str().into(),
+                    ex.as_str().into(),
+                    "".into(),
                     QueueBindOptions::default(),
                     FieldTable::default(),
                 )
@@ -1305,11 +1331,13 @@ fn ae_argument_beats_policy(p: PolicyAe) -> bool {
 
         delete_policy(&vhost, &p.policy);
         for q in [&p.policy_queue, &p.arg_queue] {
-            let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
+            let _ = channel
+                .queue_delete(q.as_str().into(), QueueDeleteOptions::default())
+                .await;
         }
         for ex in [&p.exchange, &p.policy_ae, &p.arg_ae] {
             let _ = channel
-                .exchange_delete(ex, ExchangeDeleteOptions::default())
+                .exchange_delete(ex.as_str().into(), ExchangeDeleteOptions::default())
                 .await;
         }
         let expected = if p.arg_spelling.is_some() {
@@ -1339,7 +1367,7 @@ fn consistent_hash_survives_policy_change(algorithm: HashAlgorithm) -> bool {
         algorithm.insert_into(&mut args);
         channel
             .exchange_declare(
-                "qc_ch_policy",
+                "qc_ch_policy".into(),
                 ExchangeKind::Custom("x-consistent-hash".into()),
                 ExchangeDeclareOptions::default(),
                 args,
@@ -1349,9 +1377,9 @@ fn consistent_hash_survives_policy_change(algorithm: HashAlgorithm) -> bool {
         declare_queue_for_routing(&channel, "qc_ch_policy_q", FieldTable::default()).await;
         channel
             .queue_bind(
-                "qc_ch_policy_q",
-                "qc_ch_policy",
-                "10",
+                "qc_ch_policy_q".into(),
+                "qc_ch_policy".into(),
+                "10".into(),
                 QueueBindOptions::default(),
                 FieldTable::default(),
             )
@@ -1367,10 +1395,10 @@ fn consistent_hash_survives_policy_change(algorithm: HashAlgorithm) -> bool {
 
         delete_policy(&vhost, "qc_unrelated");
         let _ = channel
-            .queue_delete("qc_ch_policy_q", QueueDeleteOptions::default())
+            .queue_delete("qc_ch_policy_q".into(), QueueDeleteOptions::default())
             .await;
         let _ = channel
-            .exchange_delete("qc_ch_policy", ExchangeDeleteOptions::default())
+            .exchange_delete("qc_ch_policy".into(), ExchangeDeleteOptions::default())
             .await;
         before.is_none() && after.is_none()
     })
@@ -1397,8 +1425,8 @@ async fn consume_with_priority(test: &str, value: AMQPValue) -> (Result<(), Stri
     args.insert(ShortString::from("x-priority"), value);
     let consumed = channel
         .basic_consume(
-            &queue,
-            "prio-consumer",
+            queue.as_str().into(),
+            "prio-consumer".into(),
             BasicConsumeOptions::default(),
             args,
         )
@@ -1407,7 +1435,7 @@ async fn consume_with_priority(test: &str, value: AMQPValue) -> (Result<(), Stri
         .map_err(|e| format!("{e:?}"));
     let alive = match conn.create_channel().await {
         Ok(probe) => probe
-            .queue_delete(&queue, QueueDeleteOptions::default())
+            .queue_delete(queue.as_str().into(), QueueDeleteOptions::default())
             .await
             .is_ok(),
         Err(_) => false,
@@ -1470,7 +1498,7 @@ fn headers_routing_matches_model(s: HeadersScenario) -> bool {
         }
         channel
             .exchange_declare(
-                &s.exchange,
+                s.exchange.as_str().into(),
                 ExchangeKind::Headers,
                 ExchangeDeclareOptions::default(),
                 args,
@@ -1483,9 +1511,9 @@ fn headers_routing_matches_model(s: HeadersScenario) -> bool {
         for b in &s.bindings {
             channel
                 .queue_bind(
-                    &s.queues[b.queue],
-                    &s.exchange,
-                    "",
+                    s.queues[b.queue].as_str().into(),
+                    s.exchange.as_str().into(),
+                    "".into(),
                     QueueBindOptions::default(),
                     b.arguments(),
                 )
@@ -1500,8 +1528,8 @@ fn headers_routing_matches_model(s: HeadersScenario) -> bool {
             }
             channel
                 .basic_publish(
-                    &s.exchange,
-                    "",
+                    s.exchange.as_str().into(),
+                    "".into(),
                     BasicPublishOptions::default(),
                     i.to_string().as_bytes(),
                     props,
@@ -1515,7 +1543,7 @@ fn headers_routing_matches_model(s: HeadersScenario) -> bool {
         let mut actual = vec![BTreeSet::new(); s.messages.len()];
         for (qi, q) in s.queues.iter().enumerate() {
             while let Some(msg) = channel
-                .basic_get(q, BasicGetOptions { no_ack: true })
+                .basic_get(q.as_str().into(), BasicGetOptions { no_ack: true })
                 .await
                 .expect("Failed to basic_get")
             {
@@ -1528,10 +1556,12 @@ fn headers_routing_matches_model(s: HeadersScenario) -> bool {
         }
 
         for q in &s.queues {
-            let _ = channel.queue_delete(q, QueueDeleteOptions::default()).await;
+            let _ = channel
+                .queue_delete(q.as_str().into(), QueueDeleteOptions::default())
+                .await;
         }
         let _ = channel
-            .exchange_delete(&s.exchange, ExchangeDeleteOptions::default())
+            .exchange_delete(s.exchange.as_str().into(), ExchangeDeleteOptions::default())
             .await;
         actual == expected
     })
@@ -1572,7 +1602,7 @@ fn invalid_x_match_rejected_on_declare(x: InvalidXMatch) -> bool {
         let name = format!("qc_hx_bad_{}", next_id());
         let res = ch
             .exchange_declare(
-                &name,
+                name.as_str().into(),
                 ExchangeKind::Headers,
                 ExchangeDeclareOptions::default(),
                 x_match_table(x.0),
@@ -1580,7 +1610,7 @@ fn invalid_x_match_rejected_on_declare(x: InvalidXMatch) -> bool {
             .await;
         if res.is_ok() {
             let _ = ch
-                .exchange_delete(&name, ExchangeDeleteOptions::default())
+                .exchange_delete(name.as_str().into(), ExchangeDeleteOptions::default())
                 .await;
         }
         res
@@ -1597,7 +1627,7 @@ fn invalid_x_match_rejected_on_bind(x: InvalidXMatch) -> bool {
         let (ex, q) = (format!("qc_hx_{id}"), format!("qc_hq_{id}"));
         setup
             .exchange_declare(
-                &ex,
+                ex.as_str().into(),
                 ExchangeKind::Headers,
                 ExchangeDeclareOptions::default(),
                 FieldTable::default(),
@@ -1608,18 +1638,20 @@ fn invalid_x_match_rejected_on_bind(x: InvalidXMatch) -> bool {
         let (ex2, q2) = (ex.clone(), q.clone());
         let ok = rejected_406_conn_alive(test, |ch| async move {
             ch.queue_bind(
-                &q2,
-                &ex2,
-                "",
+                q2.as_str().into(),
+                ex2.as_str().into(),
+                "".into(),
                 QueueBindOptions::default(),
                 x_match_table(x.0),
             )
             .await
         })
         .await;
-        let _ = setup.queue_delete(&q, QueueDeleteOptions::default()).await;
         let _ = setup
-            .exchange_delete(&ex, ExchangeDeleteOptions::default())
+            .queue_delete(q.as_str().into(), QueueDeleteOptions::default())
+            .await;
+        let _ = setup
+            .exchange_delete(ex.as_str().into(), ExchangeDeleteOptions::default())
             .await;
         ok
     })
