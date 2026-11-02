@@ -479,11 +479,10 @@ cut in the wrong places and iteration stops early. Live routing uses
 `BytesTokenIterator`, which works on bytes throughout.
 
 **Upstream:** [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316).
+Fixed by [cloudamqp/lavinmq#2512](https://github.com/cloudamqp/lavinmq/pull/2512).
 
 **How this crate covers it:** `mqtt_new_subscription_gets_retained`
-discards scenarios with non-ASCII topics or filters.
-`mqtt_retained_non_ascii_topics` runs the same property on all of them
-and is `#[ignore]`d.
+generates non-ASCII topics and filters along with ASCII ones.
 
 ## 22. Topic routing keys lose a trailing empty word
 

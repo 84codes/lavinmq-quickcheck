@@ -71,7 +71,7 @@ src/
     malformed.rs — BadUtf8Topic, BadProtocolLevel, BadSubscribeFlags.
     client.rs   — rumqttc wrapper: Conn drives the event loop in a task; subscribe/publish wait for acks, publishes_until(sentinel), disconnect() waits for the socket to close, abort() for unclean close.
     raw.rs      — hand-encoded packets over TCP for what rumqttc won't send.
-    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #19–#21.
+    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #19 and #20.
 Cargo.toml      — Package manifest (edition 2024).
 ```
 
