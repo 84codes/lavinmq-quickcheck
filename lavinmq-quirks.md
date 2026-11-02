@@ -524,10 +524,12 @@ nothing is published here.
 **Expected:** 204, as for a non-internal exchange.
 
 **Upstream:** [cloudamqp/lavinmq#2319](https://github.com/cloudamqp/lavinmq/issues/2319).
+Fixed by [cloudamqp/lavinmq#2541](https://github.com/cloudamqp/lavinmq/pull/2541).
 
 **How this crate covers it:** `internal_exchange_redeclare` (in
-`src/http/exchanges.rs`) is `#[ignore]`d. `exchange_declare_parity`
-discards cases with more than one internal declaration.
+`src/http/exchanges.rs`) redeclares an internal exchange with identical
+settings. `exchange_declare_parity` also covers internal exchanges
+redeclared with other settings.
 
 ## 24. Expirations above `i32::MAX` are rejected
 
