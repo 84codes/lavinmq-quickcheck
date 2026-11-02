@@ -170,17 +170,17 @@ it escapes as a connection-level failure.
 with the connection still usable.
 
 **How this crate covers it:** `delayed_exchange_long_name_is_clean_error`
-asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
-fixed. Run it with `cargo test -- --ignored`.
+asserts the expected behaviour.
 
 **Over HTTP:** `PUT /api/exchanges/{vhost}/{name}` for the same names
 answers `500 Internal Server Error`, whichever way the exchange is made
 delayed (`x-delayed-message`, `x-delayed-exchange: true`, or the
 HTTP-only `"delayed": true` body field). Nothing is left behind.
 `delayed_long_name_is_bad_request` (in `src/http/validation.rs`) asserts
-a 400 and is `#[ignore]`d.
+a 400.
 
-**Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297)
+**Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297).
+Fixed by [cloudamqp/lavinmq#2254](https://github.com/cloudamqp/lavinmq/pull/2254).
 
 ## 6. Alternate exchanges fire per routing pass, not per exchange
 

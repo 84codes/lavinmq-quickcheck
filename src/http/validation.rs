@@ -84,11 +84,10 @@ fn name_length_validated(resource: Resource, name: LongName) -> bool {
     )
 }
 
-/// Known bug (`lavinmq-quirks.md` #5): over HTTP, a delayed exchange whose
-/// internal queue name `amq.delayed-<name>` would exceed the limit gets 500
-/// Internal Server Error instead of a 400.
+/// Over HTTP, a delayed exchange whose internal queue name
+/// `amq.delayed-<name>` would exceed the limit gets a 400
+/// (`lavinmq-quirks.md` #5).
 #[quickcheck]
-#[ignore]
 fn delayed_long_name_is_bad_request(
     name: LongExchangeName,
     style: DeclareStyle,
