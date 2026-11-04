@@ -28,11 +28,6 @@ impl RetainScenario {
         store
     }
 
-    /// Are the filter and every topic ASCII?
-    pub fn is_ascii(&self) -> bool {
-        self.filter.is_ascii() && self.publishes.iter().all(|(t, _)| t.is_ascii())
-    }
-
     /// The same scenario with `prefix/` before every topic and the filter,
     /// so cases don't see each other's retained messages. Matching is
     /// unchanged, except that no topic starts with `$` any more.
@@ -105,13 +100,6 @@ mod tests {
             .filter(|_| !RetainScenario::arbitrary(&mut g).expected().is_empty())
             .count();
         assert!((250..=750).contains(&hits), "{hits}");
-    }
-
-    #[test]
-    fn ascii_check_covers_filter_and_topics() {
-        assert!(scenario(&[("a", b"1")], "+").is_ascii());
-        assert!(!scenario(&[("a", b"1")], "€").is_ascii());
-        assert!(!scenario(&[("a", b"1"), ("ü", b"")], "#").is_ascii());
     }
 
     #[test]

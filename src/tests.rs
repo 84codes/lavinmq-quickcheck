@@ -1,5 +1,5 @@
 use crate::names::{QueueName, RoutingKey, TopicRoutingKey};
-use crate::routing::{Binding, QueueAction, QueueNode, Topology, simulate};
+use crate::routing::{AeMode, Binding, QueueAction, QueueNode, Topology, simulate};
 use futures_lite::StreamExt;
 use lapin::{
     BasicProperties, Connection, ConnectionProperties, ExchangeKind,
@@ -668,7 +668,7 @@ async fn cleanup_topology(channel: &lapin::Channel, topo: &Topology) {
 
 #[quickcheck]
 fn routing_graph_delivers_expected(topo: Topology) -> bool {
-    let expected: HashMap<usize, u32> = simulate(&topo);
+    let expected: HashMap<usize, u32> = simulate(&topo, AeMode::from_env());
     let expected_total: u32 = expected.values().sum();
 
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1132,12 +1132,10 @@ fn odd_x_delay_delivers_immediately(s: DelayedScenario) -> bool {
     })
 }
 
-/// Desired: a delayed exchange whose internal queue name would exceed
-/// LavinMQ's 256-byte cap is refused with a channel-level error, and the
-/// connection stays usable. Ignored: LavinMQ currently aborts the whole
-/// connection instead (see `lavinmq-quirks.md` #5). Run with `--ignored`.
+/// A delayed exchange whose internal queue name would exceed LavinMQ's
+/// 256-byte cap is refused with a channel-level error, and the connection
+/// stays usable (`lavinmq-quirks.md` #5).
 #[quickcheck]
-#[ignore = "LavinMQ aborts the connection; cloudamqp/lavinmq#2297"]
 fn delayed_exchange_long_name_is_clean_error(name: LongExchangeName) -> bool {
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {

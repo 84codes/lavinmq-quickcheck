@@ -50,7 +50,7 @@ src/
   stream_offset.rs — Arbitrary x-stream-offset (first/next/int in every AMQP int width/timestamp extremes) + expected-delivery model.
   consumer_priority.rs — Arbitrary x-priority consumer-argument values: valid (any int width within i32) and invalid (out of range / non-int).
   delayed.rs    — Arbitrary delayed-exchange scenarios (both declare styles), odd x-delay values, over-long exchange names.
-  routing.rs    — Arbitrary Topology: fanout exchanges with optional alternate exchange, queues with optional DLX, bindings in shuffled order; guaranteed acyclic. simulate() models per-exchange AE semantics (RabbitMQ's; LavinMQ since cloudamqp/lavinmq#2376).
+  routing.rs    — Arbitrary Topology: fanout exchanges with optional alternate exchange, queues with optional DLX, bindings in shuffled order; guaranteed acyclic. simulate() takes an AeMode: PerPass (LavinMQ's order-dependent AE semantics, default) or PerExchange (RabbitMQ's); tests read it from QC_AE_MODE.
   tests.rs      — #[cfg(test)] integration tests against a real broker.
   http/         — #[cfg(test)] differential tests: same operation over AMQP (vhost qc-<fn>-amqp) and the HTTP API (qc-<fn>-http); outcomes must agree (diff::equivalent maps 406→400) and the resources must GET equal after normalize().
     client.rs   — ureq wrapper (put/get/delete) + encode_segment (escapes `.` too).
@@ -60,9 +60,9 @@ src/
     messages.rs — publish_parity (AMQP vs HTTP publish, read via /get) and get_parity (basic.get vs /get) + ignored quirks #11–#13.
     harness.rs  — declare_parity(): runs 1–3 declarations of one name on both sides and compares.
     queues.rs   — queue.declare vs PUT /queues parity (+ ignored amq. prefix quirk #9).
-    validation.rs — HTTP-only input validation (no AMQP side: lapin can't send >255-byte short strings): name/routing-key/property/header-key lengths via LongName, delayed names past the internal-queue limit, wrong JSON types; ignored quirks #5, #15–#17.
+    validation.rs — HTTP-only input validation (no AMQP side: lapin can't send >255-byte short strings): name/routing-key/property/header-key lengths via LongName, delayed names past the internal-queue limit, wrong JSON types; ignored quirks #15–#17.
     bindings.rs — bind/unbind parity (queue + exchange destinations, missing dest, headers args) + ignored properties_key quirk #10.
-    exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE) + ignored internal-redeclare quirk #23.
+    exchanges.rs — exchange.declare vs PUT /exchanges parity (plain, headers x-match, consistent-hash, delayed, AE, internal redeclare).
   mqtt/         — MQTT 3.1.1. Generators + models are public; client.rs, raw.rs, tests.rs are #[cfg(test)].
     topic.rs    — TopicName, Subscription (filter derived from a topic, ~50% match), InvalidTopicName/Filter; matches() (spec).
     qos.rs      — Qos 0–2; granted() (max 1), delivered() (spec min) vs lavinmq_delivered() (quirk #20).
@@ -71,7 +71,7 @@ src/
     malformed.rs — BadUtf8Topic, BadProtocolLevel, BadSubscribeFlags.
     client.rs   — rumqttc wrapper: Conn drives the event loop in a task; subscribe/publish wait for acks, publishes_until(sentinel), disconnect() waits for the socket to close, abort() for unclean close.
     raw.rs      — hand-encoded packets over TCP for what rumqttc won't send.
-    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #19–#21.
+    tests.rs    — broker tests (rumqttc + raw), plus ignored quirks #19 and #20.
 Cargo.toml      — Package manifest (edition 2024).
 ```
 

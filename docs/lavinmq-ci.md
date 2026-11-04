@@ -80,5 +80,10 @@ The binary accepts the usual libtest flags: test-name filters, `--skip`,
 the default takes about 45 s. quickcheck 1.0 has no seed option, so keep
 the job logs: a failure prints the generated input that caused it.
 
+`QC_AE_MODE` (`per-pass` or `per-exchange`, default `per-pass`) picks the
+alternate exchange semantics `routing_graph_delivers_expected` expects
+(`lavinmq-quirks.md` #6). A LavinMQ change to them sets it in the job's
+`env` instead of waiting for a new release.
+
 Each run leaves `qc-*` vhosts behind, which doesn't matter on a
 throwaway CI broker.

@@ -5,7 +5,7 @@ use crate::QueueName;
 use crate::consistent_hash::{HashAlgorithm, HashOn};
 use crate::delayed::{DeclareStyle, DelayedType, declare_args};
 use crate::headers::{InvalidXMatch, MatchMode};
-use crate::http::harness::{MAX_DECLS, declare_parity};
+use crate::http::harness::declare_parity;
 use crate::http::json::to_json;
 use lapin::{
     ExchangeKind,
@@ -117,13 +117,8 @@ fn body(d: &ExchangeDecl) -> Option<serde_json::Value> {
 
 /// Declaring the same exchange (once, or redeclared with other settings)
 /// over AMQP and over HTTP gives equivalent outcomes and the same exchange.
-/// Redeclaring an internal exchange is left to `internal_exchange_redeclare`
-/// (quirk #23).
 #[quickcheck]
 fn exchange_declare_parity(name: QueueName, decls: Vec<ExchangeDecl>) -> TestResult {
-    if decls.iter().take(MAX_DECLS).filter(|d| d.internal).count() > 1 {
-        return TestResult::discard();
-    }
     declare_parity(
         "exchange_declare_parity",
         "exchanges",
@@ -134,11 +129,9 @@ fn exchange_declare_parity(name: QueueName, decls: Vec<ExchangeDecl>) -> TestRes
     )
 }
 
-/// Known bug (`lavinmq-quirks.md` #23): re-PUTting an existing internal
-/// exchange, with identical settings, answers 400 "Not allowed to publish
-/// to internal exchange". AMQP redeclares it fine.
+/// Redeclaring an internal exchange with identical settings succeeds over
+/// HTTP as it does over AMQP (`lavinmq-quirks.md` #23).
 #[quickcheck]
-#[ignore]
 fn internal_exchange_redeclare(name: QueueName, decl: ExchangeDecl) -> TestResult {
     let decl = ExchangeDecl {
         internal: true,

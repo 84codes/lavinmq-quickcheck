@@ -187,22 +187,8 @@ fn retained_matches_model(test: &str, s: RetainScenario) -> bool {
 }
 
 #[quickcheck]
-fn mqtt_new_subscription_gets_retained(s: RetainScenario) -> TestResult {
-    if !s.is_ascii() {
-        // Non-ASCII topics break the retain store (quirk #21).
-        return TestResult::discard();
-    }
-    TestResult::from_bool(retained_matches_model(
-        "mqtt_new_subscription_gets_retained",
-        s,
-    ))
-}
-
-/// `lavinmq-quirks.md` #21: retained messages work on any UTF-8 topic.
-#[quickcheck]
-#[ignore = "LavinMQ: retain store mis-splits non-ASCII topics; cloudamqp/lavinmq#2316"]
-fn mqtt_retained_non_ascii_topics(s: RetainScenario) -> bool {
-    retained_matches_model("mqtt_retained_non_ascii_topics", s)
+fn mqtt_new_subscription_gets_retained(s: RetainScenario) -> bool {
+    retained_matches_model("mqtt_new_subscription_gets_retained", s)
 }
 
 /// §3.3.1.3: a retained publish reaches existing subscriptions with the
