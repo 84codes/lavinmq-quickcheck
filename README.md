@@ -51,7 +51,12 @@ cargo test                                         # whole suite (~45 s)
 cargo test headers                                 # only tests whose name contains "headers"
 cargo test -- --ignored                            # only the known-bug tests
 QUICKCHECK_TESTS=20 cargo test                     # fewer cases per property
+QC_AE_MODE=per-exchange cargo test routing_graph   # RabbitMQ's alternate exchange semantics
 ```
+
+`QC_AE_MODE` picks when `routing::simulate` expects an alternate
+exchange to fire: `per-pass` (default, LavinMQ main) or `per-exchange`
+(RabbitMQ, cloudamqp/lavinmq#2376). See `lavinmq-quirks.md` #6.
 
 Tests run in parallel against one broker. Each test function gets its own
 vhost, `qc-<test name>`, which is deleted and recreated the first time the

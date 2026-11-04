@@ -79,20 +79,18 @@ use std::collections::{HashMap, HashSet};
 ///
 /// Within one routing pass each exchange and each queue is visited at
 /// most once, so loops and diamond paths deliver one copy. Bindings are
-/// walked in insertion order. After walking its own bindings, an exchange
-/// hands the message to its alternate exchange iff the *whole pass* has
-/// found no queue yet (LavinMQ semantics; RabbitMQ instead fires an AE iff
-/// that exchange has no matching bindings). See `lavinmq-quirks.md`.
+/// walked in insertion order. `ae` decides when an exchange hands the
+/// message to its alternate exchange.
 ///
 /// Dead-letter transitions start a fresh pass at the DLX, so they can
 /// reach exchanges and queues the original pass already visited.
-pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
+pub fn simulate(topo: &Topology, ae: AeMode) -> HashMap<usize, u32> {
     let mut delivered: HashMap<usize, u32> = HashMap::new();
     let mut passes: Vec<usize> = vec![0];
     while let Some(start) = passes.pop() {
         let mut visited = HashSet::new();
         let mut found = Vec::new();
-        visit_exchange(topo, start, &mut visited, &mut found);
+        visit_exchange(topo, ae, start, &mut visited, &mut found);
         for q in found {
             match topo.queues[q].action {
                 QueueAction::Ack => *delivered.entry(q).or_insert(0) += 1,
@@ -108,8 +106,33 @@ pub fn simulate(topo: &Topology) -> HashMap<usize, u32> {
     delivered
 }
 
+/// When an exchange hands a message to its alternate exchange.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AeMode {
+    /// Iff the whole routing pass has found no queue yet, so sibling
+    /// binding order matters (LavinMQ, `lavinmq-quirks.md` #6).
+    #[default]
+    PerPass,
+    /// Iff none of the exchange's own bindings match (RabbitMQ, and
+    /// LavinMQ with cloudamqp/lavinmq#2376).
+    PerExchange,
+}
+
+impl AeMode {
+    /// Reads `QC_AE_MODE` (`per-pass` or `per-exchange`); unset means `per-pass`.
+    pub fn from_env() -> Self {
+        match std::env::var("QC_AE_MODE").as_deref() {
+            Err(_) | Ok("") => Self::default(),
+            Ok("per-pass") => Self::PerPass,
+            Ok("per-exchange") => Self::PerExchange,
+            Ok(other) => panic!("QC_AE_MODE must be per-pass or per-exchange, not {other:?}"),
+        }
+    }
+}
+
 fn visit_exchange(
     topo: &Topology,
+    mode: AeMode,
     ex: usize,
     visited: &mut HashSet<usize>,
     found: &mut Vec<usize>,
@@ -117,21 +140,28 @@ fn visit_exchange(
     if !visited.insert(ex) {
         return;
     }
+    let mut matched = false;
     for b in &topo.bindings {
         match *b {
-            Binding::ExchangeToQueue { src, dst } if src == ex && !found.contains(&dst) => {
-                found.push(dst);
+            Binding::ExchangeToQueue { src, dst } if src == ex => {
+                matched = true;
+                if !found.contains(&dst) {
+                    found.push(dst);
+                }
             }
             Binding::ExchangeToExchange { src, dst } if src == ex => {
-                visit_exchange(topo, dst, visited, found);
+                matched = true;
+                visit_exchange(topo, mode, dst, visited, found);
             }
             _ => {}
         }
     }
-    if found.is_empty()
-        && let Some(ae) = topo.exchanges[ex].ae
-    {
-        visit_exchange(topo, ae.target, visited, found);
+    let unrouted = match mode {
+        AeMode::PerPass => found.is_empty(),
+        AeMode::PerExchange => !matched,
+    };
+    if unrouted && let Some(ae) = topo.exchanges[ex].ae {
+        visit_exchange(topo, mode, ae.target, visited, found);
     }
 }
 
@@ -264,7 +294,7 @@ mod simulator_tests {
             queues: vec![q_ack("q0")],
             bindings: vec![e2q(1, 0)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -274,7 +304,7 @@ mod simulator_tests {
             queues: vec![q_ack("q0"), q_ack("q1")],
             bindings: vec![e2q(0, 0), e2q(1, 1)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -284,20 +314,30 @@ mod simulator_tests {
             queues: vec![q_ack("q0")],
             bindings: vec![e2q(2, 0)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
-    // LavinMQ fires an exchange's AE only if the whole pass has found no
-    // queue yet, so sibling binding order decides (RabbitMQ: always fires).
+    // Asserts that both AE modes agree, for cases where they should.
+    fn sim(topo: &Topology) -> HashMap<usize, u32> {
+        let per_pass = simulate(topo, AeMode::PerPass);
+        assert_eq!(per_pass, simulate(topo, AeMode::PerExchange));
+        per_pass
+    }
+
+    // PerPass: a sibling that already found a queue suppresses the AE.
     #[test]
-    fn sub_exchange_ae_skipped_when_sibling_found_a_queue_first() {
+    fn sub_exchange_ae_after_sibling_found_a_queue() {
         // e0 → q0, then e0 → e1; e1 has no bindings, AE → e2 → q1.
         let topo = Topology {
             exchanges: vec![ex("e0"), ex_ae("e1", 2), ex("e2")],
             queues: vec![q_ack("q0"), q_ack("q1")],
             bindings: vec![e2q(0, 0), e2e(0, 1), e2q(2, 1)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(simulate(&topo, AeMode::PerPass), HashMap::from([(0, 1)]));
+        assert_eq!(
+            simulate(&topo, AeMode::PerExchange),
+            HashMap::from([(0, 1), (1, 1)])
+        );
     }
 
     #[test]
@@ -308,21 +348,38 @@ mod simulator_tests {
             queues: vec![q_ack("q0"), q_ack("q1")],
             bindings: vec![e2e(0, 1), e2q(0, 0), e2q(2, 1)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1), (1, 1)]));
     }
 
-    // LavinMQ: an e2e binding whose subtree reaches no queue still leaves
-    // the pass empty, so the AE fires (RabbitMQ: the binding counts as a
-    // route and the AE does not fire).
+    // PerExchange: an e2e binding counts even if its subtree reaches no queue.
     #[test]
-    fn ae_fires_when_e2e_subtree_reaches_no_queue() {
+    fn ae_when_e2e_subtree_reaches_no_queue() {
         // e0 (AE → e2) → e1, e1 has no bindings.
         let topo = Topology {
             exchanges: vec![ex_ae("e0", 2), ex("e1"), ex("e2")],
             queues: vec![q_ack("q0")],
             bindings: vec![e2e(0, 1), e2q(2, 0)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(simulate(&topo, AeMode::PerPass), HashMap::from([(0, 1)]));
+        assert_eq!(simulate(&topo, AeMode::PerExchange), HashMap::new());
+    }
+
+    #[test]
+    fn ae_unused_when_e2e_target_was_already_visited() {
+        // e0 → e1 → e3 → q0 and e0 → e2 → e3; e2 has AE → e4 → q1.
+        let topo = Topology {
+            exchanges: vec![ex("e0"), ex("e1"), ex_ae("e2", 4), ex("e3"), ex("e4")],
+            queues: vec![q_ack("q0"), q_ack("q1")],
+            bindings: vec![
+                e2e(0, 1),
+                e2e(0, 2),
+                e2e(1, 3),
+                e2e(2, 3),
+                e2q(3, 0),
+                e2q(4, 1),
+            ],
+        };
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -334,7 +391,7 @@ mod simulator_tests {
             queues: vec![q_ack("q0")],
             bindings: vec![e2e(0, 1), e2e(0, 2), e2q(2, 0)],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     fn qn(name: &str, dlx: Option<usize>, action: QueueAction) -> QueueNode {
@@ -352,7 +409,7 @@ mod simulator_tests {
             queues: vec![],
             bindings: vec![],
         };
-        assert_eq!(simulate(&topo), HashMap::new());
+        assert_eq!(sim(&topo), HashMap::new());
     }
 
     #[test]
@@ -362,7 +419,7 @@ mod simulator_tests {
             queues: vec![qn("q0", None, QueueAction::Ack)],
             bindings: vec![Binding::ExchangeToQueue { src: 0, dst: 0 }],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -378,7 +435,7 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 0, dst: 1 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1), (1, 1)]));
     }
 
     #[test]
@@ -391,7 +448,7 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 1, dst: 0 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -408,7 +465,7 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 1, dst: 1 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(1, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(1, 1)]));
     }
 
     #[test]
@@ -418,7 +475,7 @@ mod simulator_tests {
             queues: vec![qn("q0", None, QueueAction::Reject)],
             bindings: vec![Binding::ExchangeToQueue { src: 0, dst: 0 }],
         };
-        assert_eq!(simulate(&topo), HashMap::new());
+        assert_eq!(sim(&topo), HashMap::new());
     }
 
     #[test]
@@ -437,7 +494,7 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 0, dst: 0 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -454,7 +511,7 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 2, dst: 0 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1)]));
     }
 
     #[test]
@@ -471,7 +528,7 @@ mod simulator_tests {
                 Binding::ExchangeToQueue { src: 0, dst: 1 },
             ],
         };
-        assert_eq!(simulate(&topo), HashMap::from([(0, 1), (1, 1)]));
+        assert_eq!(sim(&topo), HashMap::from([(0, 1), (1, 1)]));
     }
 }
 
@@ -532,7 +589,9 @@ mod generator_tests {
     fn simulate_terminates_on_any_generated_topology(topo: Topology) -> bool {
         // simulate() is guaranteed to return on any DAG. If it hangs,
         // either the generator has a bug or simulate() is wrong.
-        let _ = simulate(&topo);
+        for mode in [AeMode::PerPass, AeMode::PerExchange] {
+            let _ = simulate(&topo, mode);
+        }
         true
     }
 }

@@ -1,5 +1,5 @@
 use crate::names::{QueueName, RoutingKey, TopicRoutingKey};
-use crate::routing::{Binding, QueueAction, QueueNode, Topology, simulate};
+use crate::routing::{AeMode, Binding, QueueAction, QueueNode, Topology, simulate};
 use futures_lite::StreamExt;
 use lapin::{
     BasicProperties, Connection, ConnectionProperties, ExchangeKind,
@@ -668,7 +668,7 @@ async fn cleanup_topology(channel: &lapin::Channel, topo: &Topology) {
 
 #[quickcheck]
 fn routing_graph_delivers_expected(topo: Topology) -> bool {
-    let expected: HashMap<usize, u32> = simulate(&topo);
+    let expected: HashMap<usize, u32> = simulate(&topo, AeMode::from_env());
     let expected_total: u32 = expected.values().sum();
 
     let rt = tokio::runtime::Runtime::new().unwrap();

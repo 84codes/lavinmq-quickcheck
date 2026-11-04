@@ -209,15 +209,19 @@ bindings. RabbitMQ's `process_alternate` only looks at what that
 exchange's own `route` returned, where exchange destinations count.
 
 **How this crate models it:** `simulate` in `src/routing.rs` walks
-bindings depth-first in insertion order, and fires an AE iff the pass's
-found-queue list is still empty. The generator shuffles binding order so
+bindings depth-first in insertion order and takes an `AeMode`.
+`PerPass` (the default) fires an AE iff the pass's found-queue list is
+still empty. `PerExchange` fires it iff the exchange has no bindings
+(all exchanges are fanouts), as RabbitMQ does.
+`routing_graph_delivers_expected` reads the mode from `QC_AE_MODE`
+(`per-pass` or `per-exchange`). The generator shuffles binding order so
 both sibling orders get exercised. The unit tests
-`sub_exchange_ae_skipped_when_sibling_found_a_queue_first`,
-`sub_exchange_ae_fires_when_visited_before_sibling_queue` and
-`ae_fires_when_e2e_subtree_reaches_no_queue` pin the behaviour down.
+`sub_exchange_ae_after_sibling_found_a_queue` and
+`ae_when_e2e_subtree_reaches_no_queue` pin down both modes.
 
 A fix that switches to RabbitMQ's behaviour is proposed in
 [cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
+A LavinMQ build with it runs the suite with `QC_AE_MODE=per-exchange`.
 
 ## 7. Consistent-hash exchange with `x-algorithm` stops routing after any policy change
 
