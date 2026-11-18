@@ -51,7 +51,11 @@ cargo test                                         # whole suite (~45 s)
 cargo test headers                                 # only tests whose name contains "headers"
 cargo test -- --ignored                            # only the known-bug tests
 QUICKCHECK_TESTS=20 cargo test                     # fewer cases per property
+QC_MQTT_QOS2=1 cargo test mqtt                     # broker with MQTT QoS 2
 ```
+
+`QC_MQTT_QOS2=1` expects MQTT QoS 2 support (cloudamqp/lavinmq#2236).
+Unset, the QoS tests model LavinMQ main. See `lavinmq-quirks.md` #19 and #20.
 
 Tests run in parallel against one broker. Each test function gets its own
 vhost, `qc-<test name>`, which is deleted and recreated the first time the

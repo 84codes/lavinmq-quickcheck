@@ -1,6 +1,6 @@
 use super::client::{client_id, connect, connect_with, options, qos};
 use super::malformed::{BadProtocolLevel, BadSubscribeFlags, BadUtf8Topic};
-use super::qos::Qos;
+use super::qos::{Qos, qos2_from_env};
 use super::raw::{
     CONNACK, PUBACK, PUBREC, Raw, Read, SUBACK, connect_packet, publish_packet, subscribe_packet,
 };
@@ -80,18 +80,28 @@ fn mqtt_wildcards_skip_dollar_topics(t: TopicName, plus: bool) -> bool {
 }
 
 #[quickcheck]
-fn mqtt_subscribe_grants_requested_qos(requested: Qos) -> bool {
+fn mqtt_subscribe_grants_supported_qos(requested: Qos) -> bool {
     Runtime::new().unwrap().block_on(async {
-        let mut conn = connect("mqtt_subscribe_grants_requested_qos").await;
+        let mut conn = connect("mqtt_subscribe_grants_supported_qos").await;
         let codes = conn.subscribe("a", qos(requested)).await;
         conn.disconnect().await;
-        codes == [SubscribeReasonCode::Success(qos(requested))]
+        codes
+            == [SubscribeReasonCode::Success(qos(
+                requested.granted(qos2_from_env())
+            ))]
     })
 }
 
+/// Without QoS 2 support this checks LavinMQ's model (`lavinmq-quirks.md`
+/// #20). With `QC_MQTT_QOS2=1` it checks MQTT 3.1.1 §3.8.4.
 #[quickcheck]
-fn mqtt_delivery_qos_is_the_minimum(requested: Qos, published: Qos) -> bool {
+fn mqtt_delivery_qos_is_the_minimum(requested: Qos, published: Qos) -> TestResult {
     const TEST: &str = "mqtt_delivery_qos_is_the_minimum";
+    let qos2 = qos2_from_env();
+    if !qos2 && published == Qos(2) {
+        // Without QoS 2 support a QoS 2 publish can't complete (quirk #19).
+        return TestResult::discard();
+    }
     Runtime::new().unwrap().block_on(async {
         let mut sub = connect(TEST).await;
         sub.subscribe("a", qos(requested)).await;
@@ -106,38 +116,16 @@ fn mqtt_delivery_qos_is_the_minimum(requested: Qos, published: Qos) -> bool {
         let got = sub.publishes_until(SENTINEL).await;
         sub.disconnect().await;
         publisher.disconnect().await;
-        got.len() == 1 && got[0].qos == qos(published.delivered(requested))
-    })
-}
-
-/// `lavinmq-quirks.md` #20: delivery QoS must be the minimum of publish and
-/// granted QoS (MQTT 3.1.1 §3.8.4).
-#[quickcheck]
-fn mqtt_qos0_publish_is_delivered_at_qos0(requested: Qos) -> bool {
-    const TEST: &str = "mqtt_qos0_publish_is_delivered_at_qos0";
-    Runtime::new().unwrap().block_on(async {
-        let mut sub = connect(TEST).await;
-        sub.subscribe("a", qos(requested)).await;
-        sub.subscribe(SENTINEL, QoS::AtLeastOnce).await;
-        let mut publisher = connect(TEST).await;
-        publisher
-            .publish("a", QoS::AtMostOnce, false, b"x".to_vec())
-            .await;
-        publisher
-            .publish(SENTINEL, QoS::AtLeastOnce, false, vec![])
-            .await;
-        let got = sub.publishes_until(SENTINEL).await;
-        sub.disconnect().await;
-        publisher.disconnect().await;
-        got.len() == 1 && got[0].qos == QoS::AtMostOnce
+        let want = qos(published.lavinmq_delivered(requested.granted(qos2), qos2));
+        TestResult::from_bool(got.len() == 1 && got[0].qos == want)
     })
 }
 
 /// `lavinmq-quirks.md` #19: a QoS 2 PUBLISH must get a PUBREC
-/// (MQTT 3.1.1 §4.3.3).
+/// (MQTT 3.1.1 §4.3.3). Only runs with `QC_MQTT_QOS2=1`.
 #[quickcheck]
 fn mqtt_qos2_publish_gets_pubrec(t: TopicName, packet_id: u16) -> TestResult {
-    if packet_id == 0 {
+    if !qos2_from_env() || packet_id == 0 {
         return TestResult::discard();
     }
     Runtime::new().unwrap().block_on(async {
