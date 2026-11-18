@@ -21,7 +21,7 @@ LavinMQ bugs. Each is written up in [`lavinmq-quirks.md`](lavinmq-quirks.md).
 | Alternate exchanges | Alternate-exchange loops, an alternate exchange that doesn't exist, argument vs. policy | Loops end, unroutable mandatory messages are returned, the argument wins over a policy |
 | Consistent-hash exchange | `ring`/`jump`, `x-hash-on`, weighted bind/unbind sequences | The same key always lands on the same queue |
 | Stream offsets | `x-stream-offset` as `first`, `next`, integers (every AMQP int width, negative = last N), timestamps | Delivered messages match the offset model |
-| Delayed-message exchange | Both declare styles, `x-delay` values that can't be read as a delay, over-long names | Such `x-delay` values mean "deliver now". Over-long names fail cleanly (ignored test, see below) |
+| Delayed-message exchange | Both declare styles, `x-delay` values that can't be read as a delay, over-long names | Such `x-delay` values mean "deliver now". Over-long names fail cleanly |
 | Consumer priority | `x-priority` values, valid and invalid | In-range integers are accepted, everything else gets 406 |
 | Headers exchange | Exchange and binding `x-match`, messages without headers, values of mixed types | Routing matches `headers::matches`. Invalid `x-match` gets 406 |
 | MQTT routing | Topic/filter pairs (`+`, `#`, empty levels, `$` topics, non-ASCII), QoS 0–2 | Delivery matches `mqtt::topic::matches`. Granted and delivered QoS match `mqtt::qos` |
@@ -51,7 +51,12 @@ cargo test                                         # whole suite (~45 s)
 cargo test headers                                 # only tests whose name contains "headers"
 cargo test -- --ignored                            # only the known-bug tests
 QUICKCHECK_TESTS=20 cargo test                     # fewer cases per property
+QC_AE_MODE=per-exchange cargo test routing_graph   # RabbitMQ's alternate exchange semantics
 ```
+
+`QC_AE_MODE` picks when `routing::simulate` expects an alternate
+exchange to fire: `per-pass` (default, LavinMQ main) or `per-exchange`
+(RabbitMQ, cloudamqp/lavinmq#2376). See `lavinmq-quirks.md` #6.
 
 Tests run in parallel against one broker. Each test function gets its own
 vhost, `qc-<test name>`, which is deleted and recreated the first time the
@@ -70,13 +75,10 @@ still open. They fail until the bug is fixed:
 
 | Test | Upstream issue |
 | --- | --- |
-| `delayed_exchange_long_name_is_clean_error` | [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297) |
 | `consistent_hash_survives_policy_change` | [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300) |
 | `topic_trailing_empty_word_routes` | [cloudamqp/lavinmq#2310](https://github.com/cloudamqp/lavinmq/issues/2310) |
 | `mqtt_qos2_publish_gets_pubrec` | [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314) |
 | `mqtt_qos0_publish_is_delivered_at_qos0` | [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315) |
-| `mqtt_retained_non_ascii_topics` | [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316) |
-| `internal_exchange_redeclare` | [cloudamqp/lavinmq#2319](https://github.com/cloudamqp/lavinmq/issues/2319) |
 
 Two headers-exchange inconsistencies are filed as
 [#2301](https://github.com/cloudamqp/lavinmq/issues/2301) and

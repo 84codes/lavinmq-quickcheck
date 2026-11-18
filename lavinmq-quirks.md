@@ -170,57 +170,58 @@ it escapes as a connection-level failure.
 with the connection still usable.
 
 **How this crate covers it:** `delayed_exchange_long_name_is_clean_error`
-asserts the expected behaviour and is `#[ignore]`d until LavinMQ is
-fixed. Run it with `cargo test -- --ignored`.
+asserts the expected behaviour.
 
 **Over HTTP:** `PUT /api/exchanges/{vhost}/{name}` for the same names
 answers `500 Internal Server Error`, whichever way the exchange is made
 delayed (`x-delayed-message`, `x-delayed-exchange: true`, or the
 HTTP-only `"delayed": true` body field). Nothing is left behind.
 `delayed_long_name_is_bad_request` (in `src/http/validation.rs`) asserts
-a 400 and is `#[ignore]`d.
+a 400.
 
-**Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297)
+**Upstream:** [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297).
+Fixed by [cloudamqp/lavinmq#2254](https://github.com/cloudamqp/lavinmq/pull/2254).
 
 ## 6. Alternate exchanges fire per routing pass, not per exchange
 
-**Fixed in:** [cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
-LavinMQ now follows RabbitMQ: an exchange uses its alternate exchange
-iff none of its own bindings match, and `simulate` models that.
+**Observed:** LavinMQ hands a message to an exchange's alternate exchange
+only if the **whole routing pass** has found no queue yet when that
+exchange finishes walking its bindings. Bindings are walked in insertion
+order, so the outcome depends on binding order. Reproduced on LavinMQ
+2.10.0.
 
-**Observed (before the fix):** LavinMQ handed a message to an exchange's
-alternate exchange only if the **whole routing pass** had found no queue
-yet when that exchange finished walking its bindings. Bindings are walked
-in insertion order, so the outcome depended on binding order. Reproduced
-on LavinMQ 2.10.0.
-
-Two cases where this differed from RabbitMQ:
+Two cases where this differs from RabbitMQ:
 
 1. **Sibling order.** `e0` is bound to `q0` and to `e1`. `e1` has no
    bindings and an AE leading to `q1`. If `e0 → q0` was bound first,
-   `q0` was already found when `e1` was visited, so `e1`'s AE was
-   skipped and only `q0` got the message. If `e0 → e1` was bound first,
-   the AE fired and both got it. RabbitMQ fires `e1`'s AE either way.
+   `q0` is already found when `e1` is visited, so `e1`'s AE is skipped
+   and only `q0` gets the message. If `e0 → e1` was bound first, the AE
+   fires and both get it. RabbitMQ fires `e1`'s AE either way.
 2. **Exchange-to-exchange bindings.** `e0` (AE → `e2` → `q0`) is bound
-   only to `e1`, which has no bindings. LavinMQ found no queue, so
-   `e0`'s AE fired and `q0` got the message. RabbitMQ counts `e1` as a
+   only to `e1`, which has no bindings. LavinMQ finds no queue, so
+   `e0`'s AE fires and `q0` gets the message. RabbitMQ counts `e1` as a
    destination of `e0`, so `e0`'s AE does not fire.
 
-**Why:** `Exchange#find_queues` shared one `queues` set across the pass
-(including exchange-to-exchange hops) and checked
+**Why:** `Exchange#find_queues` shares one `queues` set across the pass
+(including exchange-to-exchange hops) and checks
 `if queues.empty? && (ae_name = alternate_exchange)` after its own
 bindings. RabbitMQ's `process_alternate` only looks at what that
 exchange's own `route` returned, where exchange destinations count.
 
 **How this crate models it:** `simulate` in `src/routing.rs` walks
-bindings depth-first in insertion order, and fires an exchange's AE iff
-that exchange has no bindings (all exchanges are fanouts). The unit
-tests `sub_exchange_ae_fires_after_sibling_found_a_queue`,
-`sub_exchange_ae_fires_when_visited_before_sibling_queue`,
-`ae_unused_when_e2e_subtree_reaches_no_queue` and
-`ae_unused_when_e2e_target_was_already_visited` pin the behaviour down.
-`routing_graph_delivers_expected` fails against LavinMQ versions without
-the fix whenever it generates one of the cases above.
+bindings depth-first in insertion order and takes an `AeMode`.
+`PerPass` (the default) fires an AE iff the pass's found-queue list is
+still empty. `PerExchange` fires it iff the exchange has no bindings
+(all exchanges are fanouts), as RabbitMQ does.
+`routing_graph_delivers_expected` reads the mode from `QC_AE_MODE`
+(`per-pass` or `per-exchange`). The generator shuffles binding order so
+both sibling orders get exercised. The unit tests
+`sub_exchange_ae_after_sibling_found_a_queue` and
+`ae_when_e2e_subtree_reaches_no_queue` pin down both modes.
+
+A fix that switches to RabbitMQ's behaviour is proposed in
+[cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
+A LavinMQ build with it runs the suite with `QC_AE_MODE=per-exchange`.
 
 ## 7. Consistent-hash exchange with `x-algorithm` stops routing after any policy change
 
@@ -247,10 +248,8 @@ purpose and is `#[ignore]`d until it's fixed.
 
 **Upstream:** [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300)
 
-**Fixed in:** [cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
-`consistent_hash_survives_policy_change` passes against a build with it.
-It stays `#[ignore]`d until a LavinMQ release has the fix, since the
-release workflow smoke-tests against `cloudamqp/lavinmq:latest`.
+A fix is proposed in
+[cloudamqp/lavinmq#2376](https://github.com/cloudamqp/lavinmq/pull/2376).
 
 ## 8. Headers exchange matching
 
@@ -484,11 +483,10 @@ cut in the wrong places and iteration stops early. Live routing uses
 `BytesTokenIterator`, which works on bytes throughout.
 
 **Upstream:** [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316).
+Fixed by [cloudamqp/lavinmq#2512](https://github.com/cloudamqp/lavinmq/pull/2512).
 
 **How this crate covers it:** `mqtt_new_subscription_gets_retained`
-discards scenarios with non-ASCII topics or filters.
-`mqtt_retained_non_ascii_topics` runs the same property on all of them
-and is `#[ignore]`d.
+generates non-ASCII topics and filters along with ASCII ones.
 
 ## 22. Topic routing keys lose a trailing empty word
 
@@ -530,10 +528,12 @@ nothing is published here.
 **Expected:** 204, as for a non-internal exchange.
 
 **Upstream:** [cloudamqp/lavinmq#2319](https://github.com/cloudamqp/lavinmq/issues/2319).
+Fixed by [cloudamqp/lavinmq#2541](https://github.com/cloudamqp/lavinmq/pull/2541).
 
 **How this crate covers it:** `internal_exchange_redeclare` (in
-`src/http/exchanges.rs`) is `#[ignore]`d. `exchange_declare_parity`
-discards cases with more than one internal declaration.
+`src/http/exchanges.rs`) redeclares an internal exchange with identical
+settings. `exchange_declare_parity` also covers internal exchanges
+redeclared with other settings.
 
 ## 24. Expirations above `i32::MAX` are rejected
 
