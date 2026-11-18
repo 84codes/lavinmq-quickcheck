@@ -453,8 +453,8 @@ which adds QoS 2 and grants it on SUBSCRIBE.
 **How this crate covers it:** `QC_MQTT_QOS2` picks the model. Unset or
 `0` (LavinMQ main): `mqtt_subscribe_grants_supported_qos` expects QoS 2
 downgraded to 1, `mqtt_delivery_qos_is_the_minimum` discards publish
-QoS 2, and `mqtt_qos2_publish_gets_pubrec` (raw socket) discards every
-case. With `QC_MQTT_QOS2=1` (a build with cloudamqp/lavinmq#2236) they
+QoS 2, and `mqtt_qos2_publish_gets_pubrec` (raw socket) passes without
+sending anything. With `QC_MQTT_QOS2=1` (a build with cloudamqp/lavinmq#2236) they
 expect a QoS 2 grant, publish at QoS 2 too, and expect a PUBREC.
 
 ## 20. MQTT QoS 0 publishes are delivered at QoS 1
