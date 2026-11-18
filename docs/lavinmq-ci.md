@@ -80,5 +80,9 @@ The binary accepts the usual libtest flags: test-name filters, `--skip`,
 the default takes about 45 s. quickcheck 1.0 has no seed option, so keep
 the job logs: a failure prints the generated input that caused it.
 
+`QC_MQTT_QOS2=1` expects MQTT QoS 2 support (`lavinmq-quirks.md` #19,
+#20). A LavinMQ change that adds it, like cloudamqp/lavinmq#2236, sets it
+in the job's `env` instead of waiting for a new release.
+
 Each run leaves `qc-*` vhosts behind, which doesn't matter on a
 throwaway CI broker.

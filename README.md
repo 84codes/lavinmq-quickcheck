@@ -51,7 +51,11 @@ cargo test                                         # whole suite (~45 s)
 cargo test headers                                 # only tests whose name contains "headers"
 cargo test -- --ignored                            # only the known-bug tests
 QUICKCHECK_TESTS=20 cargo test                     # fewer cases per property
+QC_MQTT_QOS2=1 cargo test mqtt                     # broker with MQTT QoS 2
 ```
+
+`QC_MQTT_QOS2=1` expects MQTT QoS 2 support (cloudamqp/lavinmq#2236).
+Unset, the QoS tests model LavinMQ main. See `lavinmq-quirks.md` #19 and #20.
 
 Tests run in parallel against one broker. Each test function gets its own
 vhost, `qc-<test name>`, which is deleted and recreated the first time the
@@ -73,8 +77,6 @@ still open. They fail until the bug is fixed:
 | `delayed_exchange_long_name_is_clean_error` | [cloudamqp/lavinmq#2297](https://github.com/cloudamqp/lavinmq/issues/2297) |
 | `consistent_hash_survives_policy_change` | [cloudamqp/lavinmq#2300](https://github.com/cloudamqp/lavinmq/issues/2300) |
 | `topic_trailing_empty_word_routes` | [cloudamqp/lavinmq#2310](https://github.com/cloudamqp/lavinmq/issues/2310) |
-| `mqtt_qos2_publish_gets_pubrec` | [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314) |
-| `mqtt_qos0_publish_is_delivered_at_qos0` | [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315) |
 | `mqtt_retained_non_ascii_topics` | [cloudamqp/lavinmq#2316](https://github.com/cloudamqp/lavinmq/issues/2316) |
 | `internal_exchange_redeclare` | [cloudamqp/lavinmq#2319](https://github.com/cloudamqp/lavinmq/issues/2319) |
 

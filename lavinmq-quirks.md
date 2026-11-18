@@ -446,10 +446,16 @@ server without it should still run the handshake, even if it then
 delivers at QoS 1.
 
 **Upstream:** [cloudamqp/lavinmq#2314](https://github.com/cloudamqp/lavinmq/issues/2314).
+A fix is proposed in
+[cloudamqp/lavinmq#2236](https://github.com/cloudamqp/lavinmq/pull/2236),
+which adds QoS 2 and grants it on SUBSCRIBE.
 
-**How this crate covers it:** `mqtt_qos2_publish_gets_pubrec` (raw
-socket) is `#[ignore]`d. `mqtt_delivery_qos_is_the_minimum` discards
-publish QoS 2.
+**How this crate covers it:** `QC_MQTT_QOS2` picks the model. Unset or
+`0` (LavinMQ main): `mqtt_subscribe_grants_supported_qos` expects QoS 2
+downgraded to 1, `mqtt_delivery_qos_is_the_minimum` discards publish
+QoS 2, and `mqtt_qos2_publish_gets_pubrec` (raw socket) passes without
+sending anything. With `QC_MQTT_QOS2=1` (a build with cloudamqp/lavinmq#2236) they
+expect a QoS 2 grant, publish at QoS 2 too, and expect a PUBREC.
 
 ## 20. MQTT QoS 0 publishes are delivered at QoS 1
 
@@ -463,10 +469,12 @@ client has to PUBACK. Modelled by `Qos::lavinmq_delivered` in
 the granted QoS (`Qos::delivered`).
 
 **Upstream:** [cloudamqp/lavinmq#2315](https://github.com/cloudamqp/lavinmq/issues/2315).
+A fix is proposed in
+[cloudamqp/lavinmq#2236](https://github.com/cloudamqp/lavinmq/pull/2236).
 
 **How this crate covers it:** `mqtt_delivery_qos_is_the_minimum` checks
-the LavinMQ model. `mqtt_qos0_publish_is_delivered_at_qos0` asserts the
-spec and is `#[ignore]`d.
+`Qos::lavinmq_delivered`: the granted QoS by default, `Qos::delivered`
+with `QC_MQTT_QOS2=1`.
 
 ## 21. MQTT retained messages break on non-ASCII topics
 
